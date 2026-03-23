@@ -33,21 +33,33 @@ export default function ClassList() {
         {
           id: 'provisioner',
           label: t('Provisioner'),
+          filterVariant: 'multi-select',
           getValue: storageClass => storageClass.provisioner,
+        },
+        {
+          id: 'default',
+          label: t('Default'),
+          filterVariant: 'checkbox',
+          getValue: resource => String(resource?.isDefault ?? false),
+          render: (resource: StorageClass) => (resource && resource.isDefault ? t('Yes') : null),
+          gridTemplate: 'auto',
         },
         {
           id: 'reclaimPolicy',
           label: t('Reclaim Policy'),
+          filterVariant: 'multi-select',
           getValue: storageClass => storageClass.reclaimPolicy,
         },
         {
           id: 'volumeBindingMode',
           label: t('Volume Binding Mode'),
+          filterVariant: 'multi-select',
           getValue: storageClass => storageClass.volumeBindingMode,
         },
         {
           id: 'allowVolumeExpansion',
           label: t('Allow Volume Expansion'),
+          filterVariant: 'checkbox',
           getValue: storageClass => String(storageClass.allowVolumeExpansion),
         },
         'age',

@@ -40,7 +40,7 @@ import { setSidebarItem, setSidebarItemFilter } from '../components/Sidebar/side
 import { getHeadlampAPIHeaders } from '../helpers/getHeadlampAPIHeaders';
 import { AppTheme } from '../lib/AppTheme';
 import { KubeObject } from '../lib/k8s/KubeObject';
-import { Route } from '../lib/router';
+import type { Route } from '../lib/router/Route';
 import {
   addDetailsViewHeaderActionsProcessor,
   AppBarAction,
@@ -62,9 +62,11 @@ import {
 } from '../redux/clusterActionSlice';
 import {
   addAddClusterProvider,
+  addClusterStatus,
   addDialog,
   addMenuItem,
   ClusterProviderInfo,
+  ClusterStatusComponent,
   DialogComponent,
   MenuItemComponent,
 } from '../redux/clusterProviderSlice';
@@ -89,6 +91,18 @@ import {
   TerminalEvent,
 } from '../redux/headlampEventSlice';
 import { addOverviewChartsProcessor, OverviewChartsProcessor } from '../redux/overviewChartsSlice';
+import {
+  addCustomCreateProject,
+  addDetailsTab,
+  addHeaderAction,
+  addOverviewSection,
+  CustomCreateProject,
+  ProjectDeleteButton,
+  ProjectDetailsTab,
+  ProjectHeaderAction,
+  ProjectOverviewSection,
+  setProjectDeleteButton,
+} from '../redux/projectsSlice';
 import { setRoute, setRouteFilter } from '../redux/routesSlice';
 import store from '../redux/stores/store';
 import { UIPanel, uiSlice } from '../redux/uiSlice';
@@ -814,19 +828,33 @@ export function registerMapSource(source: GraphSource) {
 /**
  * Register Icon for a resource kind
  *
+ * By default, icons are matched only by `kind`.
+ * Optionally, `apiGroup` can be provided to differentiate resources that share the same kind across different API groups.
+ *
+ * When `apiGroup` is provided, Headlamp will:
+ * 1. First try to match `${apiGroup}/${kind}`.
+ * 2. Fall back to `kind` if no match is found.
+ *
  * @param kind - Resource kind
  * @param {IconDefinition} definition - icon definition
  * @param definition.icon - React Element of the icon
  * @param definition.color - Color for the icon, optional
+ * @param apiGroup - Kubernetes API group, optional
  *
  * @example
  *
+ * Kind only Matching
  * ```tsx
  * registerKindIcon("MyCustomResource", { icon: <MyIcon />, color: "#FF0000" })
  * ```
+ *
+ * Match only networking service
+ * ```tsx
+ * registerKindIcon("Service", { icon: <NetworkingServiceIcon /> }, "networking.k8s.io");
+ * ```
  */
-export function registerKindIcon(kind: string, definition: IconDefinition) {
-  store.dispatch(graphViewSlice.actions.addKindIcon({ kind, definition }));
+export function registerKindIcon(kind: string, definition: IconDefinition, apiGroup?: string) {
+  store.dispatch(graphViewSlice.actions.addKindIcon({ kind, definition, apiGroup }));
 }
 
 /**
@@ -860,6 +888,28 @@ export function registerKindIcon(kind: string, definition: IconDefinition) {
  */
 export function registerClusterProviderMenuItem(item: MenuItemComponent) {
   store.dispatch(addMenuItem(item));
+}
+
+/**
+ * Register a new cluster status component.
+ *
+ * @param item - The component to add to the cluster status.
+ * Item is a function/component and its props are cluster and error.
+ *
+ * @example
+ * ```tsx
+ * import { registerClusterStatus } from '@kinvolk/headlamp-plugin/lib';
+ * import { ClusterStatus } from './ClusterStatus';
+ * registerClusterStatus(({ cluster, error }) => {
+ *   if (!isElectron() || !isMinikube(cluster)) {
+ *     return null;
+ *   }
+ *   return <ClusterStatus cluster={cluster} error={error} />;
+ * });
+ * ```
+ */
+export function registerClusterStatus(item: ClusterStatusComponent) {
+  store.dispatch(addClusterStatus(item));
 }
 
 /**
@@ -1007,6 +1057,115 @@ export function registerUIPanel(panel: UIPanel) {
   store.dispatch(uiSlice.actions.addUIPanel(panel));
 }
 
+/**
+ * Register a new way to create Headlamp 'Projects'
+ *
+ * @param customCreateProject - Definition for custom creator
+ *
+ * @example
+ * ```tsx
+ * registerCustomCreateProject({
+ *   id: "custom-create",
+ *   name: "Create Helm Project",
+ *   description: "Create new project from Helm chart",
+ *   Component: ({onBack}) => <div>
+ *     Create project
+ *     <input name="helm-chart-id" />
+ *     <button>Create</button>
+ *     <button onClick={onBack}>Back</button>
+ *   </div>,
+ * })
+ * ```
+ */
+export function registerCustomCreateProject(customCreateProject: CustomCreateProject) {
+  store.dispatch(addCustomCreateProject(customCreateProject));
+}
+
+/**
+ * Register a new tab in the project details view.
+ *
+ * This allows plugins to add custom tabs to the project details page,
+ * extending the information displayed about a project.
+ *
+ * @param projectDetailsTab - The tab configuration to register
+ * @param projectDetailsTab.id - Unique identifier for the tab
+ * @param projectDetailsTab.label - Display label for the tab
+ * @param projectDetailsTab.icon - Display icon for the tab
+ * @param projectDetailsTab.component - React component to render in the tab content
+ * @param projectDetailsTab.isEnabled - Optional function to determine if tab is displayed
+ *
+ * @example
+ * ```tsx
+ * registerProjectDetailsTab({
+ *   id: 'custom-metrics',
+ *   label: 'Metrics',
+ *   component: ({ project }) => <ProjectMetrics project={project} />
+ * });
+ * ```
+ */
+export function registerProjectDetailsTab(projectDetailsTab: ProjectDetailsTab) {
+  store.dispatch(addDetailsTab(projectDetailsTab));
+}
+
+/**
+ * Register a new section in the project overview page.
+ *
+ * This allows plugins to add custom sections to the project overview,
+ * providing additional information or functionality on the main project page.
+ *
+ * @param projectOverviewSection - The section configuration to register
+ * @param projectOverviewSection.id - Unique identifier for the section
+ * @param projectOverviewSection.component - React component to render in the section
+ *
+ * @example
+ * ```tsx
+ * registerProjectOverviewSection({
+ *   id: 'resource-usage',
+ *   component: ({ project }) => <ResourceUsageChart project={project} />
+ * });
+ * ```
+ */
+export function registerProjectOverviewSection(projectOverviewSection: ProjectOverviewSection) {
+  store.dispatch(addOverviewSection(projectOverviewSection));
+}
+
+/**
+ * Override default project delete button
+ *
+ * @param projectDeleteButton.component - React component for custom delete button
+ * @param projectDeleteButton.isEnabled - Optional function to determine if button is enabled
+ */
+export function registerProjectDeleteButton(projectDeleteButton: ProjectDeleteButton) {
+  store.dispatch(setProjectDeleteButton(projectDeleteButton));
+}
+
+/**
+ * Register a new action button in the project details header.
+ *
+ * This allows plugins to add custom action buttons next to the delete button
+ * in the project details page header.
+ *
+ * @param projectHeaderAction - The action configuration to register
+ * @param projectHeaderAction.id - Unique identifier for the action
+ * @param projectHeaderAction.component - React component to render as the action button
+ * @param projectHeaderAction.isEnabled - Optional function to determine if action is displayed
+ *
+ * @example
+ * ```tsx
+ * registerProjectHeaderAction({
+ *   id: 'deploy-app',
+ *   component: ({ project }) => (
+ *     <Button onClick={() => navigate(`/deploy/${project.id}`)}>
+ *       Deploy App
+ *     </Button>
+ *   )
+ * });
+ * ```
+ */
+export function registerProjectHeaderAction(projectHeaderAction: ProjectHeaderAction) {
+  store.dispatch(addHeaderAction(projectHeaderAction));
+}
+
 export {
   DefaultAppBarAction,
   DefaultDetailsViewSection,
@@ -1015,3 +1174,5 @@ export {
   PluginManager,
   ConfigStore,
 };
+
+export type { CallbackActionOptions };

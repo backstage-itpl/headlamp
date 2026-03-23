@@ -17,6 +17,7 @@
 import { Icon } from '@iconify/react';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
+import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
@@ -24,16 +25,19 @@ import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import { useTheme } from '@mui/material/styles';
 import Toolbar from '@mui/material/Toolbar';
+import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
+import { useQueries } from '@tanstack/react-query';
 import { has } from 'lodash';
 import React, { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
-import { useHistory, useLocation } from 'react-router-dom';
+import { useHistory } from 'react-router-dom';
 import { getProductName, getVersion } from '../../helpers/getProductInfo';
-import { getToken, setToken } from '../../lib/auth';
-import { useCluster, useClustersConf } from '../../lib/k8s';
-import { createRouteURL } from '../../lib/router';
+import { logout } from '../../lib/auth';
+import { useCluster, useClustersConf, useSelectedClusters } from '../../lib/k8s';
+import { ClusterUserInfo, getClusterUserInfo } from '../../lib/k8s/api/v1/clusterApi';
+import { createRouteURL } from '../../lib/router/createRouteURL';
 import {
   AppBarAction,
   AppBarActionsProcessor,
@@ -49,6 +53,7 @@ import { GlobalSearch } from '../globalSearch/GlobalSearch';
 import HeadlampButton from '../Sidebar/HeadlampButton';
 import { setWhetherSidebarOpen } from '../Sidebar/sidebarSlice';
 import { AppLogo } from './AppLogo';
+import { handleLogoutPathUpdate } from './TopBar.utils';
 
 export interface TopBarProps {}
 
@@ -67,9 +72,31 @@ export function processAppBarActions(
 ): AppBarAction[] {
   let appBarActionsProcessed = [...appBarActions];
   for (const appBarActionsProcessor of appBarActionsProcessors) {
-    appBarActionsProcessed = appBarActionsProcessor.processor({ actions: appBarActionsProcessed });
+    appBarActionsProcessed = appBarActionsProcessor.processor({
+      actions: appBarActionsProcessed,
+    });
   }
   return appBarActionsProcessed;
+}
+
+export { handleLogoutPathUpdate } from './TopBar.utils';
+
+/**
+ * Gets the display name for a user in a cluster.
+ *
+ * @param clusterName - The name of the cluster.
+ * @param clusterUserInfoMap - A map of cluster names to user info objects.
+ * @returns The username if available, otherwise the cluster name.
+ */
+function getUserDisplayName(
+  clusterName: string,
+  clusterUserInfoMap: Record<string, ClusterUserInfo | undefined>
+): string {
+  const userInfo = clusterUserInfoMap[clusterName];
+  if (userInfo?.username) {
+    return userInfo.username;
+  }
+  return clusterName;
 }
 
 export default function TopBar({}: TopBarProps) {
@@ -84,23 +111,33 @@ export default function TopBar({}: TopBarProps) {
 
   const clustersConfig = useClustersConf();
   const cluster = useCluster();
+  const selectedClusters = useSelectedClusters();
   const history = useHistory();
   const { appBarActions, appBarActionsProcessors } = useAppBarActionsProcessed();
 
-  // getToken may return stale value so we need to rerender on navigation
-  // TODO: create a useToken hook that always returns latest token
-  // eslint-disable-next-line no-unused-vars
-  const _location = useLocation();
-  function hasToken() {
-    return !!cluster ? !!getToken(cluster) : false;
-  }
+  // The logout callback
+  const logoutCallback = useCallback(
+    async (clusterToLogout?: string) => {
+      if (clusterToLogout) {
+        await logout(clusterToLogout);
+      } else {
+        if (selectedClusters.length > 0) {
+          await Promise.all(
+            selectedClusters.map(async c => {
+              await logout(c);
+            })
+          );
+        } else if (cluster) {
+          await logout(cluster);
+        }
+      }
 
-  const logout = useCallback(() => {
-    if (!!cluster) {
-      setToken(cluster, null);
-    }
-    history.push('/');
-  }, [cluster]);
+      handleLogoutPathUpdate(clusterToLogout, history.location.pathname, (path: string) =>
+        history.push(path)
+      );
+    },
+    [cluster, selectedClusters, history]
+  );
 
   const handletoggleOpen = useCallback(() => {
     // For medium view we default to closed if they have not made a selection.
@@ -120,12 +157,12 @@ export default function TopBar({}: TopBarProps) {
     <PureTopBar
       appBarActions={appBarActions}
       appBarActionsProcessors={appBarActionsProcessors}
-      logout={logout}
-      hasToken={hasToken()}
+      logout={logoutCallback}
       isSidebarOpen={isSidebarOpen}
       isSidebarOpenUserSelected={isSidebarOpenUserSelected}
       onToggleOpen={handletoggleOpen}
       cluster={cluster || undefined}
+      selectedClusters={selectedClusters}
       clusters={clustersConfig || undefined}
     />
   );
@@ -136,12 +173,12 @@ export interface PureTopBarProps {
   appBarActions: AppBarAction[];
   /** functions which filter the app bar action buttons */
   appBarActionsProcessors?: AppBarActionsProcessor[];
-  logout: () => void;
-  hasToken: boolean;
+  logout: (cluster?: string) => Promise<any> | void;
   clusters?: {
     [clusterName: string]: any;
   };
   cluster?: string;
+  selectedClusters?: string[];
   isSidebarOpen?: boolean;
   isSidebarOpenUserSelected?: boolean;
 
@@ -215,8 +252,8 @@ export const PureTopBar = memo(
     appBarActions,
     appBarActionsProcessors = [],
     logout,
-    hasToken,
     cluster,
+    selectedClusters,
     clusters,
     isSidebarOpen,
     isSidebarOpenUserSelected,
@@ -255,7 +292,28 @@ export const PureTopBar = memo(
     };
     const userMenuId = 'primary-user-menu';
 
-    const renderUserMenu = !!isClusterContext && (
+    const clustersToQuery =
+      selectedClusters && selectedClusters.length > 0 ? selectedClusters : cluster ? [cluster] : [];
+
+    const userInfoQueries = useQueries({
+      queries: clustersToQuery.map(clusterName => ({
+        queryKey: ['clusterMe', clusterName],
+        queryFn: () => getClusterUserInfo(clusterName),
+        staleTime: 5 * 60 * 1000,
+        retry: 1,
+      })),
+    });
+
+    const clusterUserInfoMap: Record<string, ClusterUserInfo | undefined> = {};
+    clustersToQuery.forEach((clusterName, index) => {
+      if (userInfoQueries[index]?.data) {
+        clusterUserInfoMap[clusterName] = userInfoQueries[index].data;
+      }
+    });
+
+    const showUserMenu = (!!selectedClusters && selectedClusters.length > 0) || isClusterContext;
+
+    const renderUserMenu = showUserMenu && (
       <Menu
         anchorEl={anchorEl}
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
@@ -274,21 +332,36 @@ export const PureTopBar = memo(
         }}
       >
         <MenuItem
-          component="a"
-          onClick={() => {
-            logout();
+          onClick={async () => {
+            await logout();
             handleMenuClose();
           }}
-          disabled={!hasToken}
         >
           <ListItemIcon>
             <Icon icon="mdi:logout" />
           </ListItemIcon>
           <ListItemText
-            primary={t('Log out')}
-            secondary={hasToken ? null : t('(No token set up)')}
+            primary={
+              selectedClusters && selectedClusters.length > 1 ? (
+                t('Log out from all')
+              ) : cluster ? (
+                <Box display="flex" flexDirection="column">
+                  <Typography variant="body2" component="span">
+                    {t('Log out')}: {getUserDisplayName(cluster, clusterUserInfoMap)}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" component="span">
+                    {cluster}
+                  </Typography>
+                </Box>
+              ) : (
+                t('Log out')
+              )
+            }
           />
         </MenuItem>
+
+        <Divider />
+
         <MenuItem
           component="a"
           onClick={() => {
@@ -333,30 +406,24 @@ export const PureTopBar = memo(
       },
       {
         id: DefaultAppBarAction.SETTINGS,
-        action: (
-          <MenuItem>
-            <SettingsButton onClickExtra={handleMenuClose} />
-          </MenuItem>
-        ),
+        action: isClusterContext ? <SettingsButton onClickExtra={handleMenuClose} /> : null,
       },
       {
         id: DefaultAppBarAction.USER,
-        action: !!isClusterContext && (
-          <MenuItem>
-            <IconButton
-              aria-label={t('Account of current user')}
-              aria-controls={userMenuId}
-              aria-haspopup="true"
-              color="inherit"
-              onClick={event => {
-                handleMenuClose();
-                handleProfileMenuOpen(event);
-              }}
-              size="medium"
-            >
-              <Icon icon="mdi:account" />
-            </IconButton>
-          </MenuItem>
+        action: showUserMenu && (
+          <IconButton
+            aria-label={t('Account of current user')}
+            aria-controls={userMenuId}
+            aria-haspopup="true"
+            color="inherit"
+            onClick={event => {
+              handleMenuClose();
+              handleProfileMenuOpen(event);
+            }}
+            size="medium"
+          >
+            <Icon icon="mdi:account" />
+          </IconButton>
         ),
       },
     ];
@@ -400,7 +467,7 @@ export const PureTopBar = memo(
       },
       {
         id: DefaultAppBarAction.USER,
-        action: !!isClusterContext && (
+        action: showUserMenu && (
           <IconButton
             aria-label={t('Account of current user')}
             aria-controls={userMenuId}
@@ -418,7 +485,14 @@ export const PureTopBar = memo(
     const visibleMobileActions = processAppBarActions(
       allAppBarActionsMobile,
       appBarActionsProcessors
-    ).filter(action => React.isValidElement(action.action) || typeof action === 'function');
+    ).filter(action => {
+      return (
+        React.isValidElement((action as AppBarAction).action) ||
+        typeof (action as AppBarAction).action === 'function' ||
+        React.isValidElement(action) ||
+        typeof action === 'function'
+      );
+    });
 
     return (
       <>

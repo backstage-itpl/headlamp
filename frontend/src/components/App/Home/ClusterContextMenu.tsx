@@ -26,9 +26,9 @@ import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
 import { useHistory } from 'react-router-dom';
 import helpers from '../../../helpers';
-import { deleteCluster } from '../../../lib/k8s/apiProxy';
+import { deleteCluster } from '../../../lib/k8s/api/v1/clusterApi';
 import { Cluster } from '../../../lib/k8s/cluster';
-import { createRouteURL } from '../../../lib/router';
+import { createRouteURL } from '../../../lib/router/createRouteURL';
 import { useId } from '../../../lib/util';
 import { setConfig } from '../../../redux/configSlice';
 import { useTypedSelector } from '../../../redux/hooks';
@@ -52,6 +52,8 @@ export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps)
   const [openConfirmDialog, setOpenConfirmDialog] = React.useState<string | null>(null);
   const dialogs = useTypedSelector(state => state.clusterProvider.dialogs);
   const menuItems = useTypedSelector(state => state.clusterProvider.menuItems);
+  const isDynamicClusterEnabled = useTypedSelector(state => state.config.isDynamicClusterEnabled);
+  const allowKubeconfigChanges = useTypedSelector(state => state.config.allowKubeconfigChanges);
 
   const kubeconfigOrigin = cluster.meta_data?.origin?.kubeconfig;
   const deleteFromKubeconfig = cluster.meta_data?.source === 'kubeconfig';
@@ -153,9 +155,11 @@ export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps)
         >
           <ListItemText>{t('translation|Settings')}</ListItemText>
         </MenuItem>
-        {helpers.isElectron() &&
-          (cluster.meta_data?.source === 'dynamic_cluster' ||
-            cluster.meta_data?.source === 'kubeconfig') && (
+        {(!menuItems || menuItems.length === 0) &&
+          ((cluster.meta_data?.source === 'dynamic_cluster' &&
+            (helpers.isElectron() || isDynamicClusterEnabled)) ||
+            (cluster.meta_data?.source === 'kubeconfig' &&
+              (helpers.isElectron() || allowKubeconfigChanges))) && (
             <MenuItem
               onClick={() => {
                 setOpenConfirmDialog('deleteDynamic');
@@ -165,7 +169,6 @@ export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps)
               <ListItemText>{t('translation|Delete')}</ListItemText>
             </MenuItem>
           )}
-
         {menuItems.map((Item, index) => {
           return (
             <Item

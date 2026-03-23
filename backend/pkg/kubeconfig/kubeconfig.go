@@ -25,8 +25,32 @@ import (
 	"k8s.io/client-go/transport"
 )
 
-// TODO: Use a different way to avoid name clashes with other clusters.
-const InClusterContextName = "main"
+var (
+	Version = "unknown"
+	AppName = "Headlamp"
+)
+
+// userAgentRoundTripper wraps an http.RoundTripper and adds a Headlamp User-Agent header.
+type userAgentRoundTripper struct {
+	base      http.RoundTripper
+	userAgent string
+}
+
+func (rt *userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	newReq := req.Clone(req.Context())
+
+	newReq.Header.Set("User-Agent", rt.userAgent)
+
+	return rt.base.RoundTrip(newReq)
+}
+
+// buildUserAgent creates a User-Agent string for Headlamp.
+func buildUserAgent() string {
+	return fmt.Sprintf("%s %s (%s/%s)", AppName, Version, runtime.GOOS, runtime.GOARCH)
+}
+
+// DefaultInClusterContextName is the default name used for the in-cluster context.
+const DefaultInClusterContextName = "main"
 
 const (
 	KubeConfig = 1 << iota
@@ -51,11 +75,72 @@ type Context struct {
 	ClusterID string `json:"clusterID"`
 }
 
+// Copy creates a deep copy of the Context, excluding the proxy field which is created on demand.
+func (c *Context) Copy() *Context {
+	var oidcConf *OidcConfig
+	if c.OidcConf != nil {
+		oidcConf = &OidcConfig{
+			ClientID:     c.OidcConf.ClientID,
+			ClientSecret: c.OidcConf.ClientSecret,
+			IdpIssuerURL: c.OidcConf.IdpIssuerURL,
+			Scopes:       make([]string, len(c.OidcConf.Scopes)),
+		}
+		copy(oidcConf.Scopes, c.OidcConf.Scopes)
+
+		// Deep copy pointer fields
+		if c.OidcConf.SkipTLSVerify != nil {
+			skipTLSVerify := *c.OidcConf.SkipTLSVerify
+			oidcConf.SkipTLSVerify = &skipTLSVerify
+		}
+
+		if c.OidcConf.CACert != nil {
+			caCert := *c.OidcConf.CACert
+			oidcConf.CACert = &caCert
+		}
+	}
+
+	var kubeContext *api.Context
+	if c.KubeContext != nil {
+		kubeContext = c.KubeContext.DeepCopy()
+	}
+
+	var cluster *api.Cluster
+	if c.Cluster != nil {
+		cluster = c.Cluster.DeepCopy()
+	}
+
+	var authInfo *api.AuthInfo
+	if c.AuthInfo != nil {
+		authInfo = c.AuthInfo.DeepCopy()
+	}
+
+	return &Context{
+		Name:           c.Name,
+		KubeContext:    kubeContext,
+		Cluster:        cluster,
+		AuthInfo:       authInfo,
+		Source:         c.Source,
+		OidcConf:       oidcConf,
+		Internal:       c.Internal,
+		Error:          c.Error,
+		KubeConfigPath: c.KubeConfigPath,
+		ClusterID:      c.ClusterID,
+	}
+}
+
 type OidcConfig struct {
-	ClientID     string
+	// OIDC client ID.
+	ClientID string
+	// OIDC client secret.
 	ClientSecret string
+	// OIDC issuer URL.
 	IdpIssuerURL string
-	Scopes       []string
+	// OIDC scopes.
+	Scopes []string
+	// Skip TLS verification.
+	SkipTLSVerify *bool
+	// OIDC CA certificate.
+	CACert *string
 }
 
 // CustomObject represents the custom object that holds the HeadlampInfo regarding custom name.
@@ -247,11 +332,40 @@ func (c *Context) OidcConfig() (*OidcConfig, error) {
 		return nil, errors.New("authProvider is nil")
 	}
 
+	var caCert *string
+
+	// if custom CA is configured in the kubeconfig auth provider use it.
+	// The arg idp-certificate-authority is the path to the CA certificate file.
+	// Refer: https://kubernetes.io/docs/reference/access-authn-authz/authentication/#using-kubectl.
+	caFilePath, ok := c.AuthInfo.AuthProvider.Config["idp-certificate-authority"]
+	if ok {
+		caFileContents, err := os.ReadFile(caFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("error reading ca file: %w", err)
+		}
+
+		caCertFileContentString := string(caFileContents)
+		caCert = &caCertFileContentString
+	}
+
+	caFileData, ok := c.AuthInfo.AuthProvider.Config["idp-certificate-authority-data"]
+	if ok {
+		// Decode base64-encoded certificate data
+		decodedData, err := base64.StdEncoding.DecodeString(caFileData)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding base64 ca data: %w", err)
+		}
+
+		caCertString := string(decodedData)
+		caCert = &caCertString
+	}
+
 	return &OidcConfig{
 		ClientID:     c.AuthInfo.AuthProvider.Config["client-id"],
 		ClientSecret: c.AuthInfo.AuthProvider.Config["client-secret"],
 		Scopes:       strings.Split(c.AuthInfo.AuthProvider.Config["scope"], ","),
 		IdpIssuerURL: c.AuthInfo.AuthProvider.Config["idp-issuer-url"],
+		CACert:       caCert,
 	}, nil
 }
 
@@ -310,7 +424,11 @@ func (c *Context) SetupProxy() error {
 	if err == nil {
 		roundTripper, err := makeTransportFor(restConf)
 		if err == nil {
-			proxy.Transport = roundTripper
+			// Wrap the round tripper to add Headlamp User-Agent
+			proxy.Transport = &userAgentRoundTripper{
+				base:      roundTripper,
+				userAgent: buildUserAgent(),
+			}
 		}
 	}
 
@@ -814,7 +932,7 @@ func convertToContext(contextName string, clientConfig *api.Config, source int, 
 	authInfo := clientConfig.AuthInfos[context.AuthInfo]
 
 	// Make contextName DNS friendly.
-	contextName = makeDNSFriendly(contextName)
+	contextName = MakeDNSFriendly(contextName)
 
 	newContext := Context{
 		Name:        contextName,
@@ -850,7 +968,7 @@ func LoadContextsFromAPIConfig(config *api.Config, skipProxySetup bool) ([]Conte
 		authInfo := config.AuthInfos[context.AuthInfo]
 
 		// Make contextName DNS friendly.
-		contextName = makeDNSFriendly(contextName)
+		contextName = MakeDNSFriendly(contextName)
 
 		context := Context{
 			Name:        contextName,
@@ -884,9 +1002,13 @@ func splitKubeConfigPath(path string) []string {
 }
 
 // GetInClusterContext returns the in-cluster context.
-func GetInClusterContext(oidcIssuerURL string,
+func GetInClusterContext(
+	contextName string,
+	oidcIssuerURL string,
 	oidcClientID string, oidcClientSecret string,
 	oidcScopes string,
+	oidcSkipTLSVerify bool,
+	oidcCACert string,
 ) (*Context, error) {
 	clusterConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -899,26 +1021,34 @@ func GetInClusterContext(oidcIssuerURL string,
 		CertificateAuthorityData: clusterConfig.CAData,
 	}
 
-	inClusterContext := &api.Context{
-		Cluster:  InClusterContextName,
-		AuthInfo: InClusterContextName,
+	if strings.TrimSpace(contextName) == "" {
+		contextName = DefaultInClusterContextName
 	}
+
+	inClusterContext := &api.Context{
+		Cluster:  contextName,
+		AuthInfo: contextName,
+	}
+	contextName = MakeDNSFriendly(contextName)
 
 	inClusterAuthInfo := &api.AuthInfo{}
 
 	var oidcConf *OidcConfig
 
-	if oidcClientID != "" && oidcClientSecret != "" && oidcIssuerURL != "" && oidcScopes != "" {
+	if oidcClientID != "" && oidcIssuerURL != "" && oidcScopes != "" {
+		// client secret is optional for in-cluster OIDC configuration
 		oidcConf = &OidcConfig{
-			ClientID:     oidcClientID,
-			ClientSecret: oidcClientSecret,
-			IdpIssuerURL: oidcIssuerURL,
-			Scopes:       strings.Split(oidcScopes, ","),
+			ClientID:      oidcClientID,
+			ClientSecret:  oidcClientSecret,
+			IdpIssuerURL:  oidcIssuerURL,
+			Scopes:        strings.Split(oidcScopes, ","),
+			SkipTLSVerify: &oidcSkipTLSVerify,
+			CACert:        &oidcCACert,
 		}
 	}
 
 	return &Context{
-		Name:        InClusterContextName,
+		Name:        contextName,
 		KubeContext: inClusterContext,
 		Cluster:     cluster,
 		AuthInfo:    inClusterAuthInfo,
@@ -993,8 +1123,8 @@ func LoadAndStoreKubeConfigs(kubeConfigStore ContextStore, kubeConfigs string, s
 	return errors.Join(errs...)
 }
 
-// makeDNSFriendly converts a string to a DNS-friendly format.
-func makeDNSFriendly(name string) string {
+// MakeDNSFriendly converts a string to a DNS-friendly format.
+func MakeDNSFriendly(name string) string {
 	name = strings.ReplaceAll(name, "/", "--")
 	name = strings.ReplaceAll(name, " ", "__")
 

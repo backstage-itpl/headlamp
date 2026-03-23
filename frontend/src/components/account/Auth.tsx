@@ -25,17 +25,19 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { generatePath, useHistory } from 'react-router-dom';
+import { generatePath, useHistory, useLocation } from 'react-router-dom';
 import { setToken } from '../../lib/auth';
 import { getCluster, getClusterPrefixedPath } from '../../lib/cluster';
 import { useClustersConf } from '../../lib/k8s';
-import { ApiError, testAuth } from '../../lib/k8s/apiProxy';
+import { testAuth } from '../../lib/k8s/api/v1/clusterApi';
+import { ApiError } from '../../lib/k8s/api/v2/ApiError';
 import { ClusterDialog } from '../cluster/Chooser';
 import { DialogTitle } from '../common/Dialog';
 import HeadlampLink from '../common/Link';
 
 export default function AuthToken() {
   const history = useHistory();
+  const location = useLocation<{ from?: Location }>();
   const clusterConf = useClustersConf();
   const [token, setToken] = React.useState('');
   const [showError, setShowError] = React.useState(false);
@@ -46,11 +48,15 @@ export default function AuthToken() {
     loginWithToken(token).then(code => {
       // If successful, redirect.
       if (code === 200) {
-        history.replace(
-          generatePath(getClusterPrefixedPath(), {
-            cluster: getCluster() as string,
-          })
-        );
+        if (location.state && location.state.from) {
+          history.replace(location.state.from);
+        } else {
+          history.replace(
+            generatePath(getClusterPrefixedPath(), {
+              cluster: getCluster() as string,
+            })
+          );
+        }
       } else {
         setToken('');
         setShowError(true);
@@ -162,7 +168,10 @@ export function PureAuthToken({
           <div style={{ flex: '1 0 0' }}></div>
         </DialogActions>
         <Box overflow="hidden" textAlign="center">
-          <HeadlampLink routeName="settingsCluster" params={{ clusterID: cluster || '' }}>
+          <HeadlampLink
+            routeName="settingsClusterHomeContext"
+            search={cluster ? { c: cluster } : ''}
+          >
             {t('translation|Cluster settings')}
           </HeadlampLink>
         </Box>
@@ -205,8 +214,7 @@ async function loginWithToken(token: string) {
       return 417;
     }
 
-    setToken(cluster, token);
-
+    await setToken(cluster, token);
     await testAuth();
 
     return 200;

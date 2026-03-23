@@ -15,21 +15,24 @@
  */
 
 import _ from 'lodash';
-import React, { useMemo } from 'react';
-import { useHistory } from 'react-router-dom';
+import React, { useContext, useMemo } from 'react';
+import { useHistory, useLocation } from 'react-router-dom';
 import { ConfigState } from '../../redux/configSlice';
 import { useTypedSelector } from '../../redux/hooks';
 import { getCluster, getSelectedClusters } from '../cluster';
-import { ApiError, clusterRequest } from './apiProxy';
+import { clusterRequest } from './api/v1/clusterRequests';
+import { ApiError } from './api/v2/ApiError';
 import { Cluster, LabelSelector, StringDict } from './cluster';
 import ClusterRole from './clusterRole';
 import ClusterRoleBinding from './clusterRoleBinding';
 import ConfigMap from './configMap';
+import ControllerRevision from './controllerRevision';
 import CustomResourceDefinition from './crd';
 import CronJob from './cronJob';
 import DaemonSet from './daemonSet';
 import Deployment from './deployment';
 import Endpoints from './endpoints';
+import EndpointSlice from './endpointSlices';
 import Gateway from './gateway';
 import GatewayClass from './gatewayClass';
 import GRPCRoute from './grpcRoute';
@@ -54,6 +57,7 @@ import Role from './role';
 import RoleBinding from './roleBinding';
 import { RuntimeClass } from './runtime';
 import Secret from './secret';
+import { SelectedClustersContext } from './SelectedClustersContext';
 import Service from './service';
 import ServiceAccount from './serviceAccount';
 import StatefulSet from './statefulSet';
@@ -63,12 +67,14 @@ export const ResourceClasses = {
   ClusterRole,
   ClusterRoleBinding,
   ConfigMap,
+  ControllerRevision,
   CustomResourceDefinition,
   CronJob,
   DaemonSet,
   Deployment,
   Endpoint: Endpoints,
   Endpoints,
+  EndpointSlice,
   LimitRange,
   Lease,
   ResourceQuota,
@@ -118,7 +124,10 @@ export function useClustersConf(): ConfigState['allClusters'] {
     Object.assign(allClusters, statelessClusters);
   }
 
-  return useMemo(() => allClusters, [Object.keys(allClusters).join(',')]);
+  return useMemo(
+    () => (state.clusters === null ? null : allClusters),
+    [state.clusters === null, Object.keys(allClusters).join(',')]
+  );
 }
 
 /**
@@ -156,13 +165,16 @@ export function useCluster() {
  */
 export function useSelectedClusters(): string[] {
   const clusterInURL = useCluster();
-  const history = useHistory();
+  const location = useLocation();
+  const maybeSelectedClusters = useContext(SelectedClustersContext);
 
   const clusterGroup = React.useMemo(() => {
-    return getSelectedClusters([], history.location.pathname);
-  }, [clusterInURL]);
+    return getSelectedClusters([], location.pathname);
+  }, [clusterInURL, location.pathname]);
 
-  return clusterGroup;
+  return maybeSelectedClusters && maybeSelectedClusters.length > 0
+    ? maybeSelectedClusters
+    : clusterGroup;
 }
 
 /**
@@ -447,6 +459,7 @@ export * as clusterRoleBinding from './clusterRoleBinding';
 export * as configMap from './configMap';
 export * as crd from './crd';
 export * as cronJob from './cronJob';
+export * as controllerRevision from './controllerRevision';
 export * as daemonSet from './daemonSet';
 export * as deployment from './deployment';
 export * as event from './event';

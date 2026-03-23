@@ -22,13 +22,22 @@ nameOverride: ""
 # -- Overrides the full name of the chart
 fullnameOverride: ""
 
+# -- Override the deployment namespace; defaults to .Release.Namespace
+namespaceOverride: ""
+
 # -- An optional list of init containers to be run before the main containers.
 initContainers: []
 
+# -- An optional list of extra containers to be run along side the main containers.
+extraContainers: []
+
 config:
   inCluster: true
+  inClusterContextName: "main"
   # -- base url path at which headlamp should run
   baseURL: ""
+  # -- session token TTL in seconds (default is 24 hours)
+  sessionTTL: 86400
   oidc:
     # Option 1:
     # @param config.oidc.secret - OIDC secret configuration
@@ -66,6 +75,8 @@ config:
     issuerURL: ""
     # -- OIDC scopes to be used
     scopes: ""
+    # -- OIDC callback URL
+    callbackURL: ""
 
     # -- OIDC client to be used during token validation
     validatorClientID: ""
@@ -73,6 +84,10 @@ config:
     validatorIssuerURL: ""
     # -- Use 'access_token' instead of 'id_token' when authenticating using OIDC
     useAccessToken: false
+    # -- Use PKCE (Proof Key for Code Exchange) for enhanced security in OIDC flow
+    usePKCE: false
+    # -- Enable using OIDC cookie for authentication outside of cluster
+    useCookie: false
 
     # Option 3:
     # @param config.oidc - External OIDC secret configuration
@@ -89,9 +104,17 @@ config:
     externalSecret:
       enabled: false
       name: ""
+
+    # -- URL to fetch additional user info for the /me endpoint.
+    # For oauth2proxy /oauth2/userinfo can be used. Empty and it will not be used.
+    meUserInfoURL: ""
+
   # -- directory to look for plugins
   pluginsDir: "/headlamp/plugins"
+  enableHelm: false
   watchPlugins: false
+  # tlsCertPath: "/headlamp-cert/headlamp-ca.crt"
+  # tlsKeyPath: "/headlamp-cert/headlamp-tls.key"
   # Extra arguments that can be given to the container. See charts/headlamp/README.md for more information.
   extraArgs: []
 
@@ -101,6 +124,9 @@ config:
 #     value: "localhost"
 #   - name: KUBERNETES_SERVICE_PORT
 #     value: "6443"
+
+# -- Mount Service Account token in pod
+automountServiceAccountToken: true
 
 serviceAccount:
   # -- Specifies whether a service account should be created
@@ -125,6 +151,17 @@ deploymentAnnotations: {}
 # -- Annotations to add to the pod
 podAnnotations: {}
 
+# -- Labels to add to the pod
+podLabels: {}
+
+# -- Controls user namespace isolation for the Headlamp pod.
+# When true (default), the pod shares the host user namespace (user namespaces are DISABLED).
+# When false, the pod uses a separate user namespace (user namespaces are ENABLED) for stronger isolation,
+# if supported by the cluster. Set this to false if your cluster supports user namespaces and you want
+# additional isolation; leave as true if user namespaces are not available.
+# See: https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/
+hostUsers: true
+
 # -- Headlamp pod's Security Context
 podSecurityContext:
   {}
@@ -140,8 +177,19 @@ securityContext:
   privileged: false
   runAsUser: 100
   runAsGroup: 101
+# Uses these defaults if this is empty.
+#   allowPrivilegeEscalation: false
+#   runAsNonRoot: true
+#   seccompProfile:
+#     type: RuntimeDefault
+#   capabilities:
+#     drop:
+#       - ALL
+
 
 service:
+  # -- Annotations to add to the service
+  annotations: {}
   # -- Kubernetes Service type
   type: ClusterIP
   # -- Kubernetes Service port
@@ -208,6 +256,39 @@ ingress:
   #    hosts:
   #      - chart-example.local
 
+# HTTPRoute configuration for Gateway API
+# Please refer to https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.HTTPRoute
+httpRoute:
+  # -- Enable HTTPRoute resource for Gateway API
+  enabled: false
+  # -- Annotations for HTTPRoute resource
+  annotations: {}
+  # -- Additional labels for HTTPRoute resource
+  labels: {}
+  # -- Parent references (REQUIRED when enabled - HTTPRoute will not work without this)
+  # Example:
+  # parentRefs:
+  #   - name: my-gateway
+  #     namespace: gateway-namespace
+  parentRefs: []
+  # -- Hostnames for the HTTPRoute
+  # Example:
+  # hostnames:
+  #   - headlamp.example.com
+  hostnames: []
+  # -- Custom routing rules (optional, defaults to path prefix /)
+  # If not specified, a default rule routing all traffic to the service is used
+  rules: []
+  # Example custom rules:
+  # rules:
+  #   - matches:
+  #       - path:
+  #           type: PathPrefix
+  #           value: /headlamp
+  #     backendRefs:
+  #       - name: "{{ .Release.Name }}-headlamp"
+  #         port: 80
+
 # -- CPU/Memory resource requests/limits
 resources:
   {}
@@ -231,6 +312,22 @@ tolerations: []
 # -- Affinity settings for pod assignment
 affinity: {}
 
+# -- Topology Spread Constraints for pod assignment
+topologySpreadConstraints: []
+#  - maxSkew: 1
+#    topologyKey: topology.kubernetes.io/zone
+#    whenUnsatisfiable: ScheduleAnyway
+#    matchLabelKeys:
+#      - pod-template-hash
+#  - maxSkew: 1
+#    topologyKey: kubernetes.io/hostname
+#    whenUnsatisfiable: DoNotSchedule
+#    matchLabelKeys:
+#      - pod-template-hash
+
+# -- Pod priority class
+priorityClassName: ""
+
 # Plugin Manager Sidecar Container Configuration
 pluginsManager:
   # -- Enable plugin manager
@@ -243,6 +340,12 @@ pluginsManager:
   baseImage: node:lts-alpine
   # -- Headlamp plugin package version to install
   version: latest
+  # -- Plugin manager containers volume mounts
+  volumeMounts: []
+  # -- Plugin manager env variable configuration
+  # env:
+  # - name: HTTPS_PROXY
+  #   value: "proxy.example.com:8080"
   # -- Specify resrouces
   # resources:
   #   requests:
@@ -251,6 +354,37 @@ pluginsManager:
   #   limits:
   #     cpu: "1000m"
   #     memory: "4096Mi"
+  # If omitted, the plugin manager will inherit the global securityContext
+  securityContext:
+    {}
+    # runAsUser: 1001
+    # runAsNonRoot: true
+    # allowPrivilegeEscalation: false
+    # readOnlyRootFilesystem: true
+    # capabilities:
+    #   drop:
+    #     - ALL
+
+podDisruptionBudget:
+  # -- enable PodDisruptionBudget
+  # ref: https://kubernetes.io/docs/concepts/workloads/pods/disruptions/
+  enabled: false
+  # @schema
+  # type: [null, integer, string]
+  # @schema
+  # -- Minimum number/percentage of pods that should remain scheduled.
+  # When it's set, maxUnavailable must be disabled by `maxUnavailable: null`
+  minAvailable: 0
+  # @schema
+  # type: [null, integer, string]
+  # @schema
+  # -- Maximum number/percentage of pods that may be made unavailable
+  maxUnavailable: null
+  # @schema
+  # type: [null, string]
+  # @schema
+  # -- How are unhealthy, but running, pods counted for eviction
+  unhealthyPodEvictionPolicy: null
 
 # -- Additional Kubernetes manifests to be deployed. Include the manifest as nested YAML.
 extraManifests: []

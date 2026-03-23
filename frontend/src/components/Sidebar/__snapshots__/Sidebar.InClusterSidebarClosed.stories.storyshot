@@ -8,7 +8,7 @@
         class="MuiDrawer-root MuiDrawer-docked css-ohfc2x-MuiDrawer-docked"
       >
         <div
-          class="MuiPaper-root MuiPaper-outlined MuiDrawer-paper MuiDrawer-paperAnchorLeft MuiDrawer-paperAnchorDockedLeft css-r16dox-MuiPaper-root-MuiDrawer-paper"
+          class="MuiPaper-root MuiPaper-outlined MuiDrawer-paper MuiDrawer-paperAnchorLeft MuiDrawer-paperAnchorDockedLeft css-2vc5z5-MuiPaper-root-MuiDrawer-paper"
         >
           <div
             class="MuiGrid-root MuiGrid-container MuiGrid-direction-xs-column MuiGrid-wrap-xs-nowrap css-opqjvv-MuiGrid-root"
@@ -23,10 +23,11 @@
                   class="css-3knmzx"
                 >
                   <a
-                    class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-divider MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-divider css-kgfvfq-MuiButtonBase-root-MuiListItemButton-root"
+                    aria-label="Home"
+                    class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Home"
@@ -42,10 +43,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Cluster"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters Mui-selected MuiListItemButton-root MuiListItemButton-gutters Mui-selected css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Cluster"
@@ -151,10 +153,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Map"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Map"
@@ -170,10 +173,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Workloads"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Workloads"
@@ -371,10 +375,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Storage"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Storage"
@@ -480,10 +485,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Network"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Network"
@@ -572,6 +578,29 @@
                                 <span
                                   class="MuiTypography-root MuiTypography-body1 MuiListItemText-primary css-nqgwvn-MuiTypography-root"
                                 >
+                                  Endpoint Slices
+                                </span>
+                              </div>
+                              <span
+                                class="MuiTouchRipple-root css-8je8zh-MuiTouchRipple-root"
+                              />
+                            </a>
+                          </li>
+                          <li
+                            class="css-1gktw5r"
+                          >
+                            <a
+                              class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-1op30le-MuiButtonBase-root-MuiListItemButton-root"
+                              href="/"
+                              role="button"
+                              tabindex="0"
+                            >
+                              <div
+                                class="MuiListItemText-root css-tlelie-MuiListItemText-root"
+                              >
+                                <span
+                                  class="MuiTypography-root MuiTypography-body1 MuiListItemText-primary css-nqgwvn-MuiTypography-root"
+                                >
                                   Ingresses
                                 </span>
                               </div>
@@ -635,10 +664,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Gateway (beta)"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Gateway (beta)"
@@ -836,10 +866,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Security"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Security"
@@ -945,10 +976,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Configuration"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Configuration"
@@ -1261,10 +1293,11 @@
                   class="css-3knmzx"
                 >
                   <a
+                    aria-label="Custom Resources"
                     class="MuiButtonBase-root MuiListItemButton-root MuiListItemButton-gutters MuiListItemButton-root MuiListItemButton-gutters css-rg8mu-MuiButtonBase-root-MuiListItemButton-root"
                     href="/"
                     role="button"
-                    tabindex="0"
+                    tabindex="-1"
                   >
                     <div
                       aria-label="Custom Resources"

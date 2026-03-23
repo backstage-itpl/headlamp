@@ -19,6 +19,7 @@ import { Meta, StoryFn } from '@storybook/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { initialState } from '../../../redux/configSlice';
+import shortcutsReducer from '../../../redux/shortcutsSlice';
 import Home from '.';
 
 const ourState = {
@@ -42,6 +43,16 @@ const ourState = {
   resourceTable: {
     tableColumnsProcessors: [],
   },
+  clusterProvider: {
+    dialogs: {},
+    menuItems: [],
+    clusterProviders: [],
+    clusterStatuses: [],
+  },
+  drawerMode: {
+    isDetailDrawerEnabled: false,
+  },
+  shortcuts: { ...shortcutsReducer(undefined, { type: '' }) },
 };
 
 // @todo: Add a way for the results from useClustersVersion to be mocked, so not
@@ -49,29 +60,50 @@ const ourState = {
 export default {
   title: 'Home/Home',
   component: Home,
-  decorators: [
-    Story => {
-      return (
-        <MemoryRouter>
-          <Provider
-            store={configureStore({
-              reducer: (state = ourState) => state,
-              preloadedState: ourState,
-            })}
-          >
-            <Story />
-          </Provider>
-        </MemoryRouter>
-      );
-    },
-  ],
-  parameters: {
-    storyshots: {
-      disable: true,
-    },
-  },
 } as Meta;
 
 const Template: StoryFn = () => <Home />;
 
 export const Base = Template.bind({});
+Base.decorators = [
+  Story => {
+    return (
+      <MemoryRouter>
+        <Provider
+          store={configureStore({
+            reducer: (state = ourState) => state,
+            preloadedState: ourState,
+          })}
+        >
+          <Story />
+        </Provider>
+      </MemoryRouter>
+    );
+  },
+];
+
+const loadingState = {
+  ...ourState,
+  config: {
+    ...ourState.config,
+    clusters: null as any,
+  },
+};
+
+export const LoadingClusters = Template.bind({});
+LoadingClusters.decorators = [
+  Story => {
+    return (
+      <MemoryRouter>
+        <Provider
+          store={configureStore({
+            reducer: (state = loadingState) => state,
+            preloadedState: loadingState,
+          })}
+        >
+          <Story />
+        </Provider>
+      </MemoryRouter>
+    );
+  },
+];

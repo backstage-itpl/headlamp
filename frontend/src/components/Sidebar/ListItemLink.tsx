@@ -32,10 +32,12 @@ interface ListItemLinkProps {
   pathname: string;
   search?: string;
   name: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
+  tabIndex?: number;
   icon?: IconProps['icon'];
   iconOnly?: boolean;
   hasParent?: boolean;
+  level?: number;
   fullWidth?: boolean;
   divider?: boolean;
   containerProps?: {
@@ -43,9 +45,9 @@ interface ListItemLinkProps {
   };
 }
 
-const StyledLi = styled('li')<{ hasParent?: boolean }>(({ hasParent }) => ({
+const StyledLi = styled('li')<{ level: number }>(({ level }) => ({
   marginRight: '5px',
-  marginLeft: hasParent ? '35px' : '5px',
+  marginLeft: `${level * 30 + 5}px`,
   marginBottom: '1px',
 }));
 
@@ -59,6 +61,7 @@ export default function ListItemLink(props: ListItemLinkProps) {
     iconOnly,
     subtitle,
     hasParent,
+    level,
     fullWidth,
     ...other
   } = props;
@@ -68,13 +71,27 @@ export default function ListItemLink(props: ListItemLinkProps) {
     [iconOnly]
   );
 
-  const renderLink = React.useMemo(
-    () =>
-      React.forwardRef<any, Omit<RouterLinkProps, 'to'>>((itemProps, ref) => (
-        <RouterLink to={{ pathname: pathname, search: search }} ref={ref} {...itemProps} />
-      )),
-    [pathname, search]
-  );
+  const renderLink = React.useMemo(() => {
+    return React.forwardRef<HTMLAnchorElement, Omit<RouterLinkProps, 'to'>>((itemProps, ref) => {
+      if (pathname.startsWith('http')) {
+        const { children, className } = itemProps;
+        return (
+          <a
+            href={pathname}
+            target="_blank"
+            ref={ref}
+            rel="noopener noreferrer"
+            className={className}
+          >
+            {children}
+          </a>
+        );
+      }
+
+      return <RouterLink to={{ pathname, search }} ref={ref} {...itemProps} />;
+    });
+  }, [pathname, search]);
+
   let listItemLink = null;
 
   if (icon) {
@@ -107,11 +124,12 @@ export default function ListItemLink(props: ListItemLinkProps) {
   }
 
   const hasSubtitle = Boolean(subtitle);
-
+  const calcLevel = level === null ? (hasParent ? 1 : 0) : level!;
   return (
-    <StyledLi hasParent={hasParent}>
+    <StyledLi level={calcLevel}>
       <ListItemButton
         component={renderLink}
+        aria-label={iconOnly ? name : undefined}
         {...other}
         sx={theme => ({
           color:
@@ -128,7 +146,7 @@ export default function ListItemLink(props: ListItemLinkProps) {
             color: 'currentColor',
           },
 
-          ':before': other.divider
+          ':after': other.divider
             ? {
                 content: '""',
                 position: 'absolute',
@@ -233,7 +251,9 @@ export default function ListItemLink(props: ListItemLinkProps) {
           <ListItemText
             primary={primary}
             secondary={subtitle}
-            secondaryTypographyProps={{ sx: { whiteSpace: 'pre' } }}
+            secondaryTypographyProps={
+              typeof subtitle === 'string' ? { sx: { whiteSpace: 'pre' } } : undefined
+            }
           />
         )}
       </ListItemButton>

@@ -14,14 +14,16 @@
  * limitations under the License.
  */
 
+import { addBackstageAuthHeaders } from '../../../../helpers/addBackstageAuthHeaders';
 import { getAppUrl } from '../../../../helpers/getAppUrl';
-import { findKubeconfigByClusterName, getUserIdFromLocalStorage } from '../../../../stateless';
-import { getToken, setToken } from '../../../auth';
-import { getClusterAuthType } from '../v1/clusterRequests';
-import { refreshToken } from '../v1/tokenApi';
+import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
+import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
 import { ApiError } from './ApiError';
 import { makeUrl } from './makeUrl';
 
+// @deprecated BASE_HTTP_URL is deprecated for Electron apps with custom ports.
+// It's evaluated at module load time, before window.headlampBackendPort is set.
+// Use getAppUrl() directly instead for runtime port configuration.
 export const BASE_HTTP_URL = getAppUrl();
 
 /**
@@ -33,8 +35,11 @@ export const BASE_HTTP_URL = getAppUrl();
  *
  * @returns fetch Response
  */
-async function backendFetch(url: string | URL, init: RequestInit) {
-  const response = await fetch(makeUrl([BASE_HTTP_URL, url]), init);
+export async function backendFetch(url: string | URL, init: RequestInit = {}) {
+  // Always include credentials
+  init.credentials = 'include';
+  init.headers = addBackstageAuthHeaders(init.headers);
+  const response = await fetch(makeUrl([getAppUrl(), url]), init);
 
   // The backend signals through this header that it wants a reload.
   // See plugins.go
@@ -48,7 +53,7 @@ async function backendFetch(url: string | URL, init: RequestInit) {
     let maybeErrorMessage: string | undefined;
     try {
       const body = await response.json();
-      maybeErrorMessage = body.message;
+      maybeErrorMessage = typeof body === 'string' ? body : body.message;
     } catch (e) {}
 
     throw new ApiError(maybeErrorMessage ?? 'Unreachable', { status: response.status });
@@ -68,8 +73,6 @@ async function backendFetch(url: string | URL, init: RequestInit) {
  * @returns fetch Response
  */
 export async function clusterFetch(url: string | URL, init: RequestInit & { cluster: string }) {
-  const token = getToken(init.cluster);
-
   init.headers = new Headers(init.headers);
 
   // Set stateless kubeconfig if exists
@@ -80,25 +83,10 @@ export async function clusterFetch(url: string | URL, init: RequestInit & { clus
     init.headers.set('X-HEADLAMP-USER-ID', userID);
   }
 
-  // Refresh service account token only if the cluster auth type is not OIDC
-  if (getClusterAuthType(init.cluster) !== 'oidc') {
-    await refreshToken(token);
-  }
-
-  if (token) {
-    init.headers.set('Authorization', `Bearer ${token}`);
-  }
-
   const urlParts = init.cluster ? ['clusters', init.cluster, url] : [url];
 
   try {
     const response = await backendFetch(makeUrl(urlParts), init);
-    // In case of OIDC auth if the token is about to expire the backend
-    // sends a refreshed token in the response header.
-    const newToken = response.headers.get('X-Authorization');
-    if (newToken && init.cluster) {
-      setToken(init.cluster, newToken);
-    }
 
     return response;
   } catch (e) {

@@ -38,7 +38,7 @@ test('GET /plugins/list returns plugins list', async ({ page }) => {
 
   const json = await response.json();
   expect(json.length).toBeGreaterThan(0);
-  expect(json.some(str => str.includes('plugins/'))).toBeTruthy();
+  expect(json.some(plugin => plugin.path && plugin.path.includes('plugins/'))).toBeTruthy();
 });
 // --- Plugin tests end --- //
 
@@ -49,6 +49,28 @@ test('headlamp is there and so is minikube', async () => {
 
 test('main page should have Network tab', async () => {
   await headlampPage.hasNetworkTab();
+});
+
+test('main page should have global search along with react-hotkey hint text', async () => {
+  const globalSearch = await headlampPage.hasGlobalSearch();
+
+  const searchHintContainer = globalSearch.locator('xpath=following-sibling::div');
+  const pressTextExists = await searchHintContainer.getByText(/^Press/).isVisible();
+  const slashHotKeyExists = await searchHintContainer
+    .locator('kbd')
+    .filter({ hasText: '/' })
+    .isVisible();
+  const toSearchTextExists = await searchHintContainer.getByText(/to search$/).isVisible();
+
+  expect(pressTextExists && slashHotKeyExists && toSearchTextExists).toBeTruthy();
+});
+
+test('react-hotkey for global search', async ({ page }) => {
+  await page.keyboard.press('/');
+
+  const focusedSearch = page.getByPlaceholder(/^Search resources, pages, clusters by name$/);
+  await expect(focusedSearch).toBeVisible();
+  await expect(focusedSearch).toBeFocused();
 });
 
 test('service page should have headlamp service', async () => {

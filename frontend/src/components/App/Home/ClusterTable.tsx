@@ -19,15 +19,29 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
+import {
+  MRT_ColumnFiltersState,
+  MRT_SortingState,
+  MRT_VisibilityState,
+} from 'material-react-table';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { generatePath, useHistory } from 'react-router-dom';
+import { getClusterAppearanceFromMeta } from '../../../helpers/clusterAppearance';
+import { isElectron } from '../../../helpers/isElectron';
+import { loadTableSettings, storeTableSettings } from '../../../helpers/tableSettings';
 import { formatClusterPathParam } from '../../../lib/cluster';
 import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
-import { ApiError } from '../../../lib/k8s/apiProxy';
+import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { Cluster } from '../../../lib/k8s/cluster';
+import { createRouteURL } from '../../../lib/router/createRouteURL';
 import { getClusterPrefixedPath } from '../../../lib/util';
+import { useTypedSelector } from '../../../redux/hooks';
+import { Loader } from '../../common';
 import Link from '../../common/Link';
 import Table from '../../common/Table';
+import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
+import ClusterBadge from '../../Sidebar/ClusterBadge';
 import ClusterContextMenu from './ClusterContextMenu';
 import { MULTI_HOME_ENABLED } from './config';
 import { getCustomClusterNames } from './customClusterNames';
@@ -39,9 +53,23 @@ import { getCustomClusterNames } from './customClusterNames';
  * @param {Object} props - The component props.
  * @param {ApiError|null} [props.error] - The error object if there is an error with the cluster.
  */
-function ClusterStatus({ error }: { error?: ApiError | null }) {
+function ClusterStatus({ error, cluster }: { error?: ApiError | null; cluster: Cluster }) {
   const { t } = useTranslation(['translation']);
   const theme = useTheme();
+  const customStatuses = useTypedSelector(state => state.clusterProvider.clusterStatuses);
+  const renderedCustomStatus = useMemo(() => {
+    for (const Status of customStatuses) {
+      const renderedStatus = <Status cluster={cluster} error={error} />;
+      if (renderedStatus !== null) {
+        return renderedStatus;
+      }
+    }
+    return null;
+  }, [customStatuses, cluster, error]);
+
+  if (renderedCustomStatus !== null) {
+    return renderedCustomStatus;
+  }
 
   const stateUnknown = error === undefined;
   const hasReachError = error && error.status !== 401 && error.status !== 403;
@@ -94,6 +122,8 @@ export interface ClusterTableProps {
 /**
  * ClusterTable component displays a table of clusters with their status, origin, and version.
  */
+const CLUSTER_TABLE_ID = 'home-clusters';
+
 export default function ClusterTable({
   customNameClusters,
   versions,
@@ -103,6 +133,54 @@ export default function ClusterTable({
 }: ClusterTableProps) {
   const history = useHistory();
   const { t } = useTranslation(['translation']);
+
+  const [columnVisibility, setColumnVisibility] = useState<MRT_VisibilityState>(() => {
+    const visibility: Record<string, boolean> = {};
+    const stored = loadTableSettings(CLUSTER_TABLE_ID);
+    stored.forEach(({ id, show }) => (visibility[id] = show));
+    return visibility;
+  });
+
+  const [sorting, setSorting] = useLocalStorageState<MRT_SortingState>(
+    `table_sorting.${CLUSTER_TABLE_ID}`,
+    [{ id: 'name', desc: false }]
+  );
+
+  const [columnFilters, setColumnFilters] = useLocalStorageState<MRT_ColumnFiltersState>(
+    `table_filters.${CLUSTER_TABLE_ID}`,
+    []
+  );
+
+  const handleColumnVisibilityChange = useCallback(
+    (updater: MRT_VisibilityState | ((old: MRT_VisibilityState) => MRT_VisibilityState)) => {
+      setColumnVisibility(oldCols => {
+        const newCols = typeof updater === 'function' ? updater(oldCols) : updater;
+        const colsToStore = Object.entries(newCols).map(([id, show]) => ({
+          id,
+          show: (show ?? true) as boolean,
+        }));
+        storeTableSettings(CLUSTER_TABLE_ID, colsToStore);
+        return newCols;
+      });
+    },
+    []
+  );
+
+  const handleSortingChange = useCallback(
+    (updater: MRT_SortingState | ((old: MRT_SortingState) => MRT_SortingState)) => {
+      setSorting(old => (typeof updater === 'function' ? updater(old) : updater));
+    },
+    [setSorting]
+  );
+
+  const handleColumnFiltersChange = useCallback(
+    (
+      updater: MRT_ColumnFiltersState | ((old: MRT_ColumnFiltersState) => MRT_ColumnFiltersState)
+    ) => {
+      setColumnFilters(old => (typeof updater === 'function' ? updater(old) : updater));
+    },
+    [setColumnFilters]
+  );
 
   /**
    * Gets the origin of a cluster.
@@ -123,6 +201,47 @@ export default function ClusterTable({
   }
   const viewClusters = t('View Clusters');
 
+  const loading = clusters === null;
+  if (loading) {
+    return <Loader title={t('Loading...')} />;
+  }
+
+  const clustersList = Object.values(customNameClusters);
+  if (clustersList.length === 0) {
+    return (
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="400px"
+        textAlign="center"
+      >
+        <Icon
+          icon="mdi:hexagon-multiple-outline"
+          style={{ fontSize: 64, color: '#ccc', marginBottom: 16 }}
+        />
+        <Typography variant="h6" gutterBottom>
+          {t('No clusters found')}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" paragraph>
+          {t('Add a cluster to get started.')}
+        </Typography>
+        {isElectron() && (
+          <Button
+            variant="contained"
+            startIcon={<Icon icon="mdi:plus" />}
+            onClick={() => {
+              history.push(createRouteURL('addCluster'));
+            }}
+          >
+            {t('Add Cluster')}
+          </Button>
+        )}
+      </Box>
+    );
+  }
+
   return (
     <Table
       columns={[
@@ -130,13 +249,21 @@ export default function ClusterTable({
           id: 'name',
           header: t('Name'),
           accessorKey: 'name',
-          Cell: ({ row: { original } }) => (
-            <Link routeName="cluster" params={{ cluster: original.name }}>
-              {original.name}
-            </Link>
-          ),
+          Cell: ({ row: { original } }) => {
+            const appearance = getClusterAppearanceFromMeta(original.name);
+            return (
+              <Link routeName="cluster" params={{ cluster: original.name }}>
+                <ClusterBadge
+                  name={original.name}
+                  icon={appearance.icon}
+                  accentColor={appearance.accentColor}
+                />
+              </Link>
+            );
+          },
         },
         {
+          id: 'origin',
           header: t('Origin'),
           accessorFn: cluster => getOrigin(cluster),
           Cell: ({ row: { original } }) => (
@@ -144,19 +271,28 @@ export default function ClusterTable({
           ),
         },
         {
+          id: 'status',
           header: t('Status'),
           accessorFn: cluster =>
             errors[cluster?.name] === null ? 'Active' : errors[cluster?.name]?.message,
-          Cell: ({ row: { original } }) => <ClusterStatus error={errors[original.name]} />,
+          Cell: ({ row: { original } }) => (
+            <ClusterStatus error={errors[original.name]} cluster={original} />
+          ),
         },
-        { header: t('Warnings'), accessorFn: cluster => warningLabels[cluster?.name] },
         {
+          id: 'warnings',
+          header: t('Warnings'),
+          accessorFn: cluster => warningLabels[cluster?.name],
+        },
+        {
+          id: 'version',
           header: t('glossary|Kubernetes Version'),
           accessorFn: ({ name }) => versions[name]?.gitVersion || '⋯',
         },
         {
           id: 'actions',
-          header: '',
+          header: t('Actions'),
+          gridTemplate: 'min-content',
           muiTableBodyCellProps: {
             align: 'right',
           },
@@ -165,9 +301,11 @@ export default function ClusterTable({
           Cell: ({ row: { original: cluster } }) => {
             return <ClusterContextMenu cluster={cluster} />;
           },
+          enableSorting: false,
+          enableColumnFilter: false,
         },
       ]}
-      data={Object.values(customNameClusters)}
+      data={clustersList}
       enableRowSelection={
         MULTI_HOME_ENABLED
           ? row => {
@@ -176,9 +314,14 @@ export default function ClusterTable({
             }
           : false
       }
-      initialState={{
-        sorting: [{ id: 'name', desc: false }],
+      state={{
+        columnVisibility,
+        sorting,
+        columnFilters,
       }}
+      onColumnVisibilityChange={handleColumnVisibilityChange}
+      onSortingChange={handleSortingChange}
+      onColumnFiltersChange={handleColumnFiltersChange}
       muiToolbarAlertBannerProps={{
         sx: theme => ({
           background: theme.palette.background.muted,

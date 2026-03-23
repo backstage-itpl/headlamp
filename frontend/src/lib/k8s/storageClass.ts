@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import { KubeObject, KubeObjectInterface } from './KubeObject';
+import type { KubeObjectInterface } from './KubeObject';
+import { KubeObject } from './KubeObject';
 
 export interface KubeStorageClass extends KubeObjectInterface {
   provisioner: string;
@@ -36,6 +37,14 @@ class StorageClass extends KubeObject<KubeStorageClass> {
     baseObject.volumeBindingMode = '';
     baseObject.allowVolumeExpansion = false;
     return baseObject;
+  }
+
+  get isDefault(): boolean {
+    const annotations = this.jsonData.metadata?.annotations;
+    if (annotations !== undefined) {
+      return annotations['storageclass.kubernetes.io/is-default-class'] === 'true';
+    }
+    return false;
   }
 
   get provisioner() {

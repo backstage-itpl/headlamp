@@ -20,6 +20,7 @@ declare module '@mui/private-theming' {
   interface DefaultTheme extends Theme {}
 }
 
+import { Activity } from './components/activity/Activity';
 import * as CommonComponents from './components/common';
 import * as K8s from './lib/k8s';
 import * as ApiProxy from './lib/k8s/apiProxy';
@@ -27,12 +28,17 @@ import * as Notification from './lib/notification';
 import * as Router from './lib/router';
 import * as Utils from './lib/util';
 import { Headlamp, Plugin } from './plugin/lib';
+import { getSupportedLocales, isLocaleSupported, useTranslation } from './plugin/pluginI18n';
 import { PluginSettingsDetailsProps } from './plugin/pluginsSlice';
+import type { CallbackActionOptions, HeadlampEvent } from './plugin/registry';
 import Registry, {
   AppLogoProps,
   clusterAction,
   ClusterChooserProps,
   ConfigStore,
+  DefaultAppBarAction,
+  DefaultDetailsViewSection,
+  DefaultHeadlampEvents,
   DefaultSidebars,
   DetailsViewDefaultHeaderActions,
   DetailsViewSectionProps,
@@ -45,14 +51,23 @@ import Registry, {
   registerClusterChooser,
   registerClusterProviderDialog,
   registerClusterProviderMenuItem,
+  registerClusterStatus,
+  registerCustomCreateProject,
   registerDetailsViewHeaderAction,
   registerDetailsViewHeaderActionsProcessor,
   registerDetailsViewSection,
+  registerDetailsViewSectionsProcessor,
   registerGetTokenFunction,
+  registerHeadlampEventCallback,
   registerKindIcon,
   registerKubeObjectGlance,
   registerMapSource,
+  registerOverviewChartsProcessor,
   registerPluginSettings,
+  registerProjectDeleteButton,
+  registerProjectDetailsTab,
+  registerProjectHeaderAction,
+  registerProjectOverviewSection,
   registerResourceTableColumnsProcessor,
   registerRoute,
   registerRouteFilter,
@@ -74,6 +89,9 @@ export {
   Registry,
   Headlamp,
   Notification,
+  DefaultAppBarAction,
+  DefaultDetailsViewSection,
+  DefaultHeadlampEvents,
   DetailsViewDefaultHeaderActions,
   getHeadlampAPIHeaders,
   registerAppLogo,
@@ -81,6 +99,7 @@ export {
   registerClusterChooser,
   registerDetailsViewHeaderAction,
   registerDetailsViewSection,
+  registerDetailsViewSectionsProcessor,
   registerRoute,
   registerRouteFilter,
   registerSidebarEntry,
@@ -88,12 +107,14 @@ export {
   registerDetailsViewHeaderActionsProcessor,
   registerGetTokenFunction,
   registerResourceTableColumnsProcessor,
+  registerOverviewChartsProcessor,
   registerPluginSettings,
   clusterAction,
   runCommand,
   registerAddClusterProvider,
   registerClusterProviderDialog,
   registerClusterProviderMenuItem,
+  registerHeadlampEventCallback,
   ConfigStore,
   registerKindIcon,
   registerMapSource,
@@ -101,12 +122,24 @@ export {
   registerUIPanel,
   registerAppTheme,
   registerKubeObjectGlance,
+  useTranslation,
+  isLocaleSupported,
+  getSupportedLocales,
+  registerCustomCreateProject,
+  registerProjectDetailsTab,
+  registerProjectOverviewSection,
+  registerProjectHeaderAction,
+  registerClusterStatus,
+  registerProjectDeleteButton,
+  Activity,
 };
 
 export type {
   AppLogoProps,
   PluginSettingsDetailsProps,
+  CallbackActionOptions,
   ClusterChooserProps,
   DetailsViewSectionProps,
   DefaultSidebars,
+  HeadlampEvent,
 };

@@ -14,21 +14,20 @@
  * limitations under the License.
  */
 
+import { useQuery } from '@tanstack/react-query';
 import React, { Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
 import { Redirect, Route, RouteProps, Switch, useHistory } from 'react-router-dom';
-import { getToken } from '../../lib/auth';
 import { getCluster, getSelectedClusters } from '../../lib/cluster';
-import { useClustersConf } from '../../lib/k8s';
-import {
-  createRouteURL,
-  getDefaultRoutes,
-  getRoutePath,
-  getRouteUseClusterURL,
-  NotFoundRoute,
-  Route as RouteType,
-} from '../../lib/router';
+import { useCluster, useClustersConf } from '../../lib/k8s';
+import { testAuth } from '../../lib/k8s/api/v1/clusterApi';
+import { NotFoundRoute } from '../../lib/router';
+import { createRouteURL } from '../../lib/router/createRouteURL';
+import { getDefaultRoutes } from '../../lib/router/getDefaultRoutes';
+import { getRoutePath } from '../../lib/router/getRoutePath';
+import { getRouteUseClusterURL } from '../../lib/router/getRouteUseClusterURL';
+import { Route as RouteType } from '../../lib/router/Route';
 import { useTypedSelector } from '../../redux/hooks';
 import { uiSlice } from '../../redux/uiSlice';
 import ErrorBoundary from '../common/ErrorBoundary';
@@ -131,9 +130,16 @@ function PageTitle({
   title: string | null | undefined;
   children: React.ReactNode;
 }) {
+  const cluster = useCluster();
+
   React.useEffect(() => {
-    document.title = title || '';
-  }, [title]);
+    if (cluster && title) {
+      document.title = `${cluster} - ${title}`;
+      return;
+    }
+
+    document.title = cluster || title || '';
+  }, [cluster, title]);
 
   return <>{children}</>;
 }
@@ -153,11 +159,36 @@ function AuthRoute(props: AuthRouteProps) {
     sidebar,
     requiresAuth = true,
     requiresCluster = true,
-    requiresToken,
+    computedMatch = {},
     ...other
   } = props;
-  const redirectRoute = getCluster() ? 'login' : 'chooser';
-  useSidebarItem(sidebar);
+
+  useSidebarItem(sidebar, computedMatch);
+  const cluster = useCluster();
+  const query = useQuery({
+    queryKey: ['auth', cluster],
+    queryFn: () => testAuth(cluster!),
+    enabled: !!cluster && requiresAuth,
+    retry: 0,
+  });
+
+  const clusters = useClustersConf();
+  const currentCluster = getCluster();
+  const clusterConf = currentCluster && clusters ? clusters[currentCluster] : null;
+  const authError = query.error as any;
+  const isExplicitAuthError = [401, 403].includes(authError?.status);
+
+  let redirectRoute: string;
+
+  if (!currentCluster) {
+    redirectRoute = 'chooser';
+  } else if (clusterConf?.auth_type === 'oidc') {
+    redirectRoute = 'login';
+  } else if (query.isError && isExplicitAuthError) {
+    redirectRoute = 'token';
+  } else {
+    redirectRoute = 'login';
+  }
 
   function getRenderer({ location }: RouteProps) {
     if (!requiresAuth) {
@@ -169,24 +200,24 @@ function AuthRoute(props: AuthRouteProps) {
         // In multi-cluster mode, we do not know if one of them requires a token.
         return children;
       }
-
-      const clusterName = getCluster();
-
-      if (!!clusterName) {
-        if (!!getToken(clusterName) || !requiresToken()) {
-          return children;
-        }
-      }
     }
 
-    return (
-      <Redirect
-        to={{
-          pathname: createRouteURL(redirectRoute),
-          state: { from: location },
-        }}
-      />
-    );
+    if (query.isSuccess) {
+      return children;
+    }
+
+    if (query.isError) {
+      return (
+        <Redirect
+          to={{
+            pathname: createRouteURL(redirectRoute),
+            state: { from: location },
+          }}
+        />
+      );
+    }
+
+    return null;
   }
 
   // If no auth is required for the view, or the token is set up, then

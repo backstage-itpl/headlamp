@@ -15,26 +15,24 @@
  */
 
 import { JSONPath } from 'jsonpath-plus';
-import { cloneDeep, unset } from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import unset from 'lodash/unset';
 import React, { useMemo } from 'react';
 import { loadClusterSettings } from '../../helpers/clusterSettings';
 import { formatClusterPathParam, getCluster, getSelectedClusters } from '../cluster';
-import { createRouteURL } from '../router';
+import { createRouteURL } from '../router/createRouteURL';
 import { timeAgo } from '../util';
 import { useConnectApi, useSelectedClusters } from '.';
-import { RecursivePartial } from './api/v1/factories';
+import { post } from './api/v1/clusterRequests';
+import type { DeleteParameters } from './api/v1/deleteParameters';
+import type { RecursivePartial } from './api/v1/factories';
+import { apiFactory, apiFactoryWithNamespace } from './api/v1/factories';
+import type { QueryParameters } from './api/v1/queryParameters';
+import type { ApiError } from './api/v2/ApiError';
 import { useKubeObject } from './api/v2/hooks';
 import { makeListRequests, useKubeObjectList } from './api/v2/useKubeObjectList';
-import {
-  ApiError,
-  apiFactory,
-  apiFactoryWithNamespace,
-  DeleteParameters,
-  post,
-  QueryParameters,
-} from './apiProxy';
-import { KubeEvent } from './event';
-import { KubeMetadata } from './KubeMetadata';
+import type { KubeEvent } from './event';
+import type { KubeMetadata, KubeMetadataCreate } from './KubeMetadata';
 
 function getAllowedNamespaces(cluster: string | null = getCluster()): string[] {
   if (!cluster) {
@@ -63,6 +61,9 @@ export class KubeObject<T extends KubeObjectInterface | KubeEvent = any> {
   /** Whether the object is namespaced. */
   static readonly isNamespaced: boolean;
 
+  /** Whether the object is scalable, and should have a ScaleButton */
+  static readonly isScalable: boolean;
+
   static _internalApiEndpoint?: ReturnType<typeof apiFactoryWithNamespace | typeof apiFactory>;
 
   static get apiEndpoint() {
@@ -74,7 +75,7 @@ export class KubeObject<T extends KubeObjectInterface | KubeEvent = any> {
     // Create factory arguments per API version, usually just one
     const factoryArgumentsArray = versions.map(apiVersion => {
       const [group, version] = apiVersion.includes('/') ? apiVersion.split('/') : ['', apiVersion];
-      const includeScaleApi = ['Deployment', 'ReplicaSet', 'StatefulSet'].includes(this.kind);
+      const includeScaleApi = this.isScalable;
 
       return [group, version, this.apiName, includeScaleApi];
     });
@@ -119,6 +120,41 @@ export class KubeObject<T extends KubeObjectInterface | KubeEvent = any> {
 
   static get detailsRoute(): string {
     return this.kind;
+  }
+
+  /**
+   * Get name of the API group of this resource
+   * for example will return batch for CronJob
+   *
+   * For core group, like Pods, it will return undefined
+   *
+   * API group reference https://kubernetes.io/docs/reference/using-api/#api-groups
+   */
+  static get apiGroupName(): string | undefined {
+    // Get any of the versions, group will be the same
+    const apiVersion = typeof this.apiVersion === 'string' ? this.apiVersion : this.apiVersion[0];
+
+    if (!apiVersion.includes('/')) return;
+
+    return apiVersion.split('/')[0];
+  }
+
+  /**
+   * Type guard to check if a KubeObject instance belongs to this class.
+   * Compares API group name and kind to determine if the instance matches.
+   * This works even if class definitions are duplicated and should be used
+   * instead of `instanceof`.
+   *
+   * @param maybeInstance - The KubeObject instance to check.
+   * @returns True if the instance is of this class type, with narrowed type.
+   */
+  static isClassOf<K extends KubeObjectClass>(
+    this: K,
+    maybeInstance: KubeObject
+  ): maybeInstance is InstanceType<K> {
+    return (
+      maybeInstance._class().apiGroupName === this.apiGroupName && maybeInstance.kind === this.kind
+    );
   }
 
   static get pluralName(): string {
@@ -188,6 +224,10 @@ export class KubeObject<T extends KubeObjectInterface | KubeEvent = any> {
 
   get isNamespaced() {
     return this._class().isNamespaced;
+  }
+
+  get isScalable() {
+    return this._class().isScalable;
   }
 
   getEditableObject() {
@@ -449,10 +489,12 @@ export class KubeObject<T extends KubeObjectInterface | KubeEvent = any> {
     }
     const params: DeleteParameters = {};
 
-    console.log(force);
+    if (this._class().kind === 'Job') {
+      params.propagationPolicy = 'Background';
+    }
+
     if (force) {
       params.gracePeriodSeconds = 0;
-      console.log(params);
     }
 
     // @ts-ignore
@@ -690,6 +732,15 @@ export interface KubeObjectInterface {
   key?: any;
   [otherProps: string]: any;
 }
+
+/**
+ * KubeObjectInterfaceCreate is a version of KubeObjectInterface for creating objects
+ * where uid, creationTimestamp, etc. are optional
+ */
+export interface KubeObjectInterfaceCreate extends Omit<KubeObjectInterface, 'metadata'> {
+  metadata: KubeMetadataCreate;
+}
+
 export interface ApiListOptions extends QueryParameters {
   /**
    * The clusters to list objects from. By default uses the current clusters being viewed.

@@ -192,6 +192,7 @@ function EventsSection() {
         {
           label: t('Type'),
           gridTemplate: 'min-content',
+          filterVariant: 'multi-select',
           getValue: event => event.involvedObject.kind,
         },
         {
@@ -205,6 +206,7 @@ function EventsSection() {
         {
           label: t('Reason'),
           gridTemplate: 'min-content',
+          filterVariant: 'multi-select',
           getValue: event => event.reason,
           render: event => (
             <LightTooltip title={event.reason} interactive>
@@ -219,6 +221,14 @@ function EventsSection() {
             <ShowHideLabel labelId={event.metadata?.uid || ''}>{event.message || ''}</ShowHideLabel>
           ),
           gridTemplate: 'auto',
+        },
+        {
+          id: 'count',
+          label: t('Count'),
+          gridTemplate: 'min-content',
+          cellProps: { align: 'right' },
+          getValue: event => event.count ?? null,
+          render: event => event.count ?? '-',
         },
         {
           id: 'last-seen',

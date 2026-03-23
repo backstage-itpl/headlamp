@@ -15,10 +15,9 @@
  */
 
 import { ResourceClasses } from '.';
-import { apiFactory, apiFactoryWithNamespace } from './apiProxy';
+import { apiFactory, apiFactoryWithNamespace } from './api/v1/factories';
+import type { KubeObjectClass, KubeObjectInterface } from './KubeObject';
 import { KubeObject } from './KubeObject';
-import { KubeObjectInterface } from './KubeObject';
-import { KubeObjectClass } from './KubeObject';
 
 export interface KubeCRD extends KubeObjectInterface {
   spec: {
@@ -104,6 +103,7 @@ class CustomResourceDefinition extends KubeObject<KubeCRD> {
       for (const versionItem of this.spec.versions) {
         if (!!versionItem.storage) {
           version = versionItem.name;
+          break;
         } else if (!version) {
           version = versionItem.name;
         }
@@ -146,7 +146,7 @@ export interface CRClassArgs {
   pluralName: string;
   singularName: string;
   isNamespaced: boolean;
-  customResourceDefinition: CustomResourceDefinition;
+  customResourceDefinition?: CustomResourceDefinition;
 }
 
 /** @deprecated Use the version of the function that receives an object as its argument. */
@@ -191,6 +191,34 @@ export function makeCustomResourceClass(
     static isNamespaced = objArgs.isNamespaced;
     static apiEndpoint = apiFunc(...apiInfoArgs);
     static customResourceDefinition = crClassArgs.customResourceDefinition;
+
+    static getBaseObject(): Omit<KubeObjectInterface, 'metadata'> & {
+      metadata: Partial<import('./KubeMetadata').KubeMetadata>;
+    } {
+      // For custom resources - use the storage version from the CRD if available,
+      // otherwise fall back to the first apiInfo entry
+      let group: string;
+      let version: string;
+      if (crClassArgs.customResourceDefinition) {
+        [group, version] = crClassArgs.customResourceDefinition.getMainAPIGroup();
+      } else {
+        if (!apiInfoArgs.length) {
+          throw new Error(
+            'makeCustomResourceClass requires at least one apiInfo entry when customResourceDefinition is not provided'
+          );
+        }
+        [group, version] = apiInfoArgs[0];
+      }
+      const apiVersion = group ? `${group}/${version}` : version;
+
+      return {
+        apiVersion,
+        kind: this.kind,
+        metadata: {
+          name: '',
+        },
+      };
+    }
   };
 }
 

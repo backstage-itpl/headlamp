@@ -55,8 +55,8 @@ Follow these steps when submitting a PR to ensure it meets the project’s stand
 
 Run the following commands from your project directory:
 
-- `make frontend-test` - Run the test suite
-- `make frontend-lint` - Format your code to match the project
+- `npm run frontend:test` - Run the test suite
+- `npm run frontend:lint` - Format your code to match the project
 
 These steps ensure your code is functional, well-typed, and formatted consistently.
 
@@ -68,13 +68,13 @@ Use **atomic commits** to keep each commit focused on a single change. Follow th
 
 `<area>: <description of changes>`
 
-- Both the title and the body of the commit message shoud not exceed
+- Both the title and the body of the commit message should not exceed
   72 characters in length.
   i.e. Please keep the title length under 72
   characters, and the wrap the body of the message at 72 characters.
 
 - Commits should be atomic and self-contained. Divide logically separate changes
-  to separate commits. This principle is best explained in the the Linux Kernel
+  to separate commits. This principle is best explained in the Linux Kernel
   [submitting patches](https://www.kernel.org/doc/html/v4.17/process/submitting-patches.html#separate-your-changes) guide.
 
 - Commit messages should explain the intention, _why_ something is done. This,
@@ -156,11 +156,11 @@ For linting the `backend` and `frontend`, use the following commands
 (respectively):
 
 ```bash
-make backend-lint
+npm run backend:lint
 ```
 
 ```bash
-make frontend-lint
+npm run frontend:lint
 ```
 
 The linters are also run in the CI system, so any PRs you create will be
@@ -194,13 +194,13 @@ an associated story when possible.
 For running the frontend tests, use the following command:
 
 ```bash
-make frontend-test
+npm run frontend:test
 ```
 
 The backend uses go's testing and can be run by using the following command:
 
 ```bash
-make backend-test
+npm run backend:test
 ```
 
 Tests will run as part of the CI after a Pull Request is open.

@@ -21,8 +21,9 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation } from 'react-router-dom';
 import { getCluster } from '../../lib/cluster';
-import { testClusterHealth } from '../../lib/k8s/apiProxy';
-import { getRoute, getRoutePath } from '../../lib/router';
+import { testClusterHealth } from '../../lib/k8s/api/v1/clusterApi';
+import { getRoute } from '../../lib/router/getRoute';
+import { getRoutePath } from '../../lib/router/getRoutePath';
 
 // in ms
 const NETWORK_STATUS_CHECK_TIME = 5000;
@@ -101,10 +102,15 @@ export function PureAlertNotification({ checkerFunction }: PureAlertNotification
   );
 
   const showOnRoute = React.useMemo(() => {
-    for (const route of ROUTES_WITHOUT_ALERT) {
-      const routePath = getRoutePath(getRoute(route));
-      if (matchPath(pathname, routePath)?.isExact) {
-        return false;
+    for (const routeName of ROUTES_WITHOUT_ALERT) {
+      const maybeRoute = getRoute(routeName);
+      if (maybeRoute) {
+        const routePath = getRoutePath(maybeRoute);
+        if (matchPath(pathname, routePath)?.isExact) {
+          return false;
+        }
+      } else {
+        console.error(`Can't find ${routeName} route`);
       }
     }
     return true;

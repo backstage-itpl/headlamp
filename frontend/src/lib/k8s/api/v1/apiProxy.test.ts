@@ -23,7 +23,6 @@ import nock from 'nock';
 import { Mock, MockedFunction } from 'vitest';
 import WS from 'vitest-websocket-mock';
 import { getAppUrl } from '../../../../helpers/getAppUrl';
-import * as auth from '../../../auth';
 import * as cluster from '../../../cluster';
 import * as apiProxy from '../../apiProxy';
 
@@ -123,17 +122,6 @@ describe('apiProxy', () => {
 
       const response = await apiProxy.clusterRequest(testPath, {}, queryParams);
       expect(response).toEqual(mockResponse);
-    });
-
-    it('Successfully handles X-Authorization for token refresh', async () => {
-      nock(baseApiUrl)
-        .get(`/clusters/test-cluster${testPath}`)
-        .reply(200, mockResponse, { 'X-Authorization': 'newToken' });
-
-      const setTokenSpy = vi.spyOn(auth, 'setToken');
-      await apiProxy.clusterRequest(testPath, { cluster: clusterName });
-      expect(setTokenSpy).toHaveBeenCalledWith(clusterName, 'newToken');
-      auth.deleteTokens();
     });
   });
 
@@ -859,6 +847,47 @@ describe('apiProxy', () => {
     );
   });
 
+  describe('getClusterUserInfo', () => {
+    const apiPath = '/apis/authentication.k8s.io/v1/selfsubjectreviews';
+    const mockUserInfo = {
+      username: 'test-user',
+      uid: 'test-uid',
+      groups: ['test-group'],
+    };
+    const mockSuccessResponse = {
+      status: {
+        userInfo: mockUserInfo,
+      },
+    };
+
+    afterEach(() => {
+      nock.cleanAll();
+    });
+
+    it('Successfully returns user info when API is available', async () => {
+      nock(baseApiUrl).post(`/clusters/${clusterName}${apiPath}`).reply(200, mockSuccessResponse);
+
+      const userInfo = await apiProxy.getClusterUserInfo(clusterName);
+      expect(userInfo).toEqual(mockUserInfo);
+    });
+
+    it('Falls back to cluster name when API returns error', async () => {
+      nock(baseApiUrl)
+        .post(`/clusters/${clusterName}${apiPath}`)
+        .reply(404, { message: 'Not Found' });
+
+      const userInfo = await apiProxy.getClusterUserInfo(clusterName);
+      expect(userInfo).toEqual({ username: clusterName });
+    });
+
+    it('Falls back to cluster name when API returns no user info', async () => {
+      nock(baseApiUrl).post(`/clusters/${clusterName}${apiPath}`).reply(200, {});
+
+      const userInfo = await apiProxy.getClusterUserInfo(clusterName);
+      expect(userInfo).toEqual({ username: clusterName });
+    });
+  });
+
   describe('testClusterHealth', () => {
     const apiPath = '/healthz';
 
@@ -1055,7 +1084,7 @@ describe('apiProxy', () => {
 
         expect(url).toContain('drain-node');
         expect(options.method).toBe('POST');
-        expect(options.headers.get('content-type')).toEqual('application/json');
+        expect(new Headers(options.headers).get('content-type')).toEqual('application/json');
         expect(options.body).toEqual(JSON.stringify({ cluster: clusterName, nodeName }));
       });
 
@@ -1064,6 +1093,7 @@ describe('apiProxy', () => {
           return Promise.resolve({
             ok: false,
             json: () => Promise.resolve(drainNodeErrorResponse),
+            headers: new Headers(),
           });
         });
 
@@ -1082,7 +1112,7 @@ describe('apiProxy', () => {
 
         expect(url).toContain('drain-node-status');
         expect(options.method).toBe('GET');
-        expect(options.headers.get('content-type')).toEqual('application/json');
+        expect(new Headers(options.headers).get('content-type')).toEqual('application/json');
       });
 
       it('Successfully handles drainNodeStatus with error', async () => {
@@ -1090,6 +1120,7 @@ describe('apiProxy', () => {
           return Promise.resolve({
             ok: false,
             json: () => Promise.resolve(drainNodeErrorResponse),
+            headers: new Headers(),
           });
         });
 
@@ -1102,13 +1133,19 @@ describe('apiProxy', () => {
 
   describe('deletePlugin', () => {
     const pluginName = 'test-plugin';
+    const pluginType = 'user';
     const fakePluginName = 'fake-plugin';
 
     beforeEach(() => {
       (global.fetch as MockedFunction<typeof fetch>) = vi
         .fn()
         .mockImplementation((url, options) => {
-          if (url.endsWith(`/plugins/${pluginName}`) && options.method === 'DELETE') {
+          const isSuccessfulDelete =
+            options.method === 'DELETE' &&
+            (url.endsWith(`/plugins/${pluginName}`) ||
+              url.endsWith(`/plugins/${pluginName}?type=${pluginType}`));
+
+          if (isSuccessfulDelete) {
             return Promise.resolve(
               new Response(JSON.stringify(mockResponse), {
                 status: 200,
@@ -1137,6 +1174,18 @@ describe('apiProxy', () => {
       expect(response).toEqual(mockResponse);
       expect(fetch).toHaveBeenCalledWith(
         expect.stringContaining(`plugins/${pluginName}`),
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: {},
+        })
+      );
+    });
+
+    it('Successfully deletes a user plugin when type is provided', async () => {
+      const response = await apiProxy.deletePlugin(pluginName, 'user');
+      expect(response).toEqual(mockResponse);
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining(`plugins/${pluginName}?type=${pluginType}`),
         expect.objectContaining({
           method: 'DELETE',
           headers: {},

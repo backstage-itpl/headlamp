@@ -15,15 +15,23 @@
  */
 
 import { isDebugVerbose } from '../../../../helpers/debugVerbose';
-import { findKubeconfigByClusterName, getUserIdFromLocalStorage } from '../../../../stateless';
-import { getToken } from '../../../auth';
+import { getAppUrl } from '../../../../helpers/getAppUrl';
+import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
+import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
 import { getCluster } from '../../../cluster';
-import { KubeObjectInterface } from '../../KubeObject';
-import { ApiError } from '../v2/ApiError';
+import type { KubeObjectInterface } from '../../KubeObject';
+import type { ApiError } from '../v2/ApiError';
 import { clusterRequest } from './clusterRequests';
-import { BASE_HTTP_URL, CLUSTERS_PREFIX } from './constants';
+import { CLUSTERS_PREFIX } from './constants';
 import { asQuery, combinePath } from './formatUrl';
-import { QueryParameters } from './queryParameters';
+import type { QueryParameters } from './queryParameters';
+
+/**
+ * Get the WebSocket base URL dynamically to support runtime port configuration
+ */
+function getBaseWsUrl(): string {
+  return getAppUrl().replace('http', 'ws');
+}
 
 export type StreamUpdate<T = any> = {
   type: 'ADDED' | 'MODIFIED' | 'DELETED' | 'ERROR';
@@ -33,8 +41,6 @@ export type StreamUpdate<T = any> = {
 export type StreamResultsCb<T = any> = (data: T) => void;
 export type StreamUpdatesCb<T = any> = (data: T | StreamUpdate<T>) => void;
 export type StreamErrCb = (err: Error & { status?: number }, cancelStreamFunc?: () => void) => void;
-
-const BASE_WS_URL = BASE_HTTP_URL.replace('http', 'ws');
 
 /**
  * Fetches the data and watches for changes to the data.
@@ -413,14 +419,9 @@ export async function connectStreamWithParams<T>(
   const { isJson = false, additionalProtocols = [], cluster = '' } = params || {};
   let isClosing = false;
 
-  const token = getToken(cluster || '');
   const userID = getUserIdFromLocalStorage();
 
   const protocols = ['base64.binary.k8s.io', ...additionalProtocols];
-  if (token) {
-    const encodedToken = btoa(token).replace(/=/g, '');
-    protocols.push(`base64url.bearer.authorization.k8s.io.${encodedToken}`);
-  }
 
   let fullPath = path;
   let url = '';
@@ -433,11 +434,11 @@ export async function connectStreamWithParams<T>(
         protocols.push(`base64url.headlamp.authorization.k8s.io.${userID}`);
       }
 
-      url = combinePath(BASE_WS_URL, fullPath);
+      url = combinePath(getBaseWsUrl(), fullPath);
     } catch (error) {
       console.error('Error while finding kubeconfig:', error);
       // If we can't find the kubeconfig, we'll just use the base URL.
-      url = combinePath(BASE_WS_URL, fullPath);
+      url = combinePath(getBaseWsUrl(), fullPath);
     }
   }
 

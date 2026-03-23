@@ -15,8 +15,9 @@
  */
 
 import _ from 'lodash';
-import { KubeCondition } from './cluster';
-import { KubeObject, KubeObjectInterface } from './KubeObject';
+import type { KubeCondition } from './cluster';
+import type { KubeObjectInterface } from './KubeObject';
+import { KubeObject } from './KubeObject';
 
 export interface KubePortStatus {
   error?: string;
@@ -101,6 +102,15 @@ class Service extends KubeObject<KubeService> {
 
   getPorts() {
     return this.spec?.ports?.map(port => port.port);
+  }
+
+  getFormattedPorts() {
+    return this.spec?.ports?.map(({ port, nodePort, targetPort, protocol }) => {
+      const isSamePort = targetPort && Number(targetPort) === port;
+      const secondary = nodePort ?? (targetPort && isSamePort ? undefined : targetPort);
+      const label = secondary ? `${port}:${secondary}` : `${port}`;
+      return protocol ? `${label}/${protocol}` : label;
+    });
   }
 
   getSelector() {

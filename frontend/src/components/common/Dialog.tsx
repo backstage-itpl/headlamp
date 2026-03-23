@@ -44,7 +44,12 @@ export interface OurDialogTitleProps extends DialogTitleProps {
  * reading can begin.
  */
 export function DialogTitle(props: OurDialogTitleProps) {
-  const { children, focusTitle, buttons, disableTypography = false, ...other } = props;
+  const { children, focusTitle, buttons, disableTypography = false, id, ...other } = props;
+
+  // Don't render heading if there's no content to avoid empty heading violations
+  if (!children && (!buttons || buttons.length === 0)) {
+    return null;
+  }
 
   const focusedRef = React.useCallback((node: HTMLElement) => {
     if (node !== null) {
@@ -58,23 +63,26 @@ export function DialogTitle(props: OurDialogTitleProps) {
   return (
     <MuiDialogTitle style={{ display: 'flex' }} {...other}>
       <Grid container justifyContent="space-between" alignItems="center">
-        <Grid item>
-          {disableTypography ? (
-            children
-          ) : (
-            <Typography
-              ref={focusedRef}
-              variant="h1"
-              style={{
-                fontSize: '1.25rem',
-                fontWeight: 500,
-                lineHeight: 1.6,
-              }}
-            >
-              {children}
-            </Typography>
-          )}
-        </Grid>
+        {children && (
+          <Grid item>
+            {disableTypography ? (
+              <div id={id}>{children}</div>
+            ) : (
+              <Typography
+                id={id}
+                ref={focusedRef}
+                variant="h1"
+                style={{
+                  fontSize: '1.25rem',
+                  fontWeight: 500,
+                  lineHeight: 1.6,
+                }}
+              >
+                {children}
+              </Typography>
+            )}
+          </Grid>
+        )}
         {buttons && buttons.length > 0 && (
           <Grid item>
             <Box>
@@ -149,11 +157,21 @@ export function Dialog(props: DialogProps) {
       />
     );
   }
+  const generatedId = React.useId();
+  const titleId = titleProps?.id || generatedId;
+  const dialogAriaProps = title ? { 'aria-labelledby': titleId } : {};
 
   return (
-    <MuiDialog maxWidth="lg" scroll="paper" fullWidth fullScreen={fullScreen} {...other}>
+    <MuiDialog
+      maxWidth="lg"
+      scroll="paper"
+      fullWidth
+      fullScreen={fullScreen}
+      {...dialogAriaProps}
+      {...other}
+    >
       {(!!title || withFullScreen) && (
-        <DialogTitle buttons={[<FullScreenButton />, <CloseButton />]} {...titleProps}>
+        <DialogTitle {...titleProps} id={titleId} buttons={[<FullScreenButton />, <CloseButton />]}>
           {title}
         </DialogTitle>
       )}

@@ -16,45 +16,72 @@ These are the required dependencies to get started. Other dependencies are pulle
 
 - [Node.js](https://nodejs.org/en/download/) Latest LTS (20.11.1 at time of writing). Many of us use [nvm](https://github.com/nvm-sh/nvm) for installing multiple versions of Node.
 - [Go](https://go.dev/doc/install), (1.24 at time of writing)
-- [Make](https://www.gnu.org/software/make/) (GNU). Often installed by default. On Windows this can be installed with the "chocolatey" package manager that is installed with node.
 - [Kubernetes](https://kubernetes.io/), we suggest [minikube](https://minikube.sigs.k8s.io/docs/) as one good K8s installation for testing locally. Other k8s installations are supported (see [platforms](../platforms.md).
 
 ## Build the code
 
 Headlamp is composed of a `backend` and a `frontend`.
 
-You can build both the `backend` and `frontend` by running.
+You can build both the `backend` and `frontend` by running:
 
 ```bash
-make
+npm run build
 ```
 
 Or individually:
 
 ```bash
-make backend
+npm run backend:build
 ```
 
 and
 
 ```bash
-make frontend
+npm run frontend:build
 ```
 
 ## Run the code
 
-The quickest way to get the `backend` and `frontend` running for development is
-the following (respectively):
+The quickest way to get the `backend` and `frontend` running for development is to run both together:
 
 ```bash
-make run-backend
+npm start
+```
+
+Or you can run them individually in separate terminal instances:
+
+```bash
+npm run backend:start
 ```
 
 and in a different terminal instance:
 
 ```bash
-make run-frontend
+npm run frontend:start
 ```
+
+### Backend logging
+
+Backend log verbosity can be controlled using either a flag or an environment variable.
+- `--log-level`
+- `HEADLAMP_CONFIG_LOG_LEVEL`
+
+Supported Values: `debug`, `info`, `warn`, `error` (default: `info`) 
+
+Example:
+```bash
+npm run backend:start -- --log-level warn
+```
+
+## Generate API documentation
+
+To generate the TypeScript API documentation:
+
+```bash
+npm run docs
+```
+
+This generates API documentation in `docs/development/api/` using TypeDoc.
 
 ## Build the app
 
@@ -66,15 +93,15 @@ and the linux app on a linux box.
 Choose the relevant command:
 
 ```bash
-make app-linux
+npm run app:package:linux
 ```
 
 ```bash
-make app-mac
+npm run app:package:mac
 ```
 
 ```bash
-make app-win
+npm run app:package:win
 ```
 
 For Windows, by default it will produce an installer using [NSIS (Nullsoft Scriptable Install System)](https://sourceforge.net/projects/nsis/).
@@ -90,24 +117,47 @@ set PATH=%PATH%;C:\Program Files (x86)\WiX Toolset v3.11\bin
 Then run the following command to generate the `.msi` installer:
 
 ```bash
-make app-win-msi
+npm run app:package:win:msi
 ```
 
 See the generated app files in app/dist/ .
 
+### Verifying Builds
+
+After packaging the desktop app using the appropriate `npm run app:package` command (which creates packaged artifacts in `app/dist/`), you can verify that the built binaries work correctly by running the appropriate verification command. This is useful to ensure the built binaries run properly, especially when upgrading packages that build binaries or when updating Electron.
+
+#### Linux
+```bash
+npm run app:verify-build-linux
+```
+
+#### macOS
+```bash
+npm run app:verify-build-mac
+```
+
+#### Windows
+```powershell
+npm run app:verify-build-windows
+```
+
+These verification scripts will check that build artifacts exist, test the backend server binary, and run the Electron app to ensure it executes correctly.
+
+**Note for macOS:** On systems without a display server (like CI environments), the Electron app may timeout. This is expected behavior and is treated as success if the app at least starts.
+
 ### Running the app
 
-If you already have **BOTH** the `backend` and `frontend` up and running, the quickest way to 
+If you already have **BOTH** the `backend` and `frontend` up and running, the quickest way to
 get the `app` running for development is the following:
 
 ```bash
-make run-only-app
+npm run app:start:client
 ```
 
 or else you can simply do
 
 ```bash
-make run-app
+npm run start:app
 ```
 
 which runs everything including the `backend`, `frontend` and `app` in parallel.
@@ -116,8 +166,12 @@ which runs everything including the `backend`, `frontend` and `app` in parallel.
 
 Headlamp on WSL requires some packages installed (maybe it requires more) to run the app.
 
+Note: `libgconf-2-4` was removed starting with Ubuntu 24.04 and newer
+releases. If you are on an older release where it is still available you can
+install it as well, otherwise you can safely omit it.
+
 ```bash
-sudo apt install libgconf-2-4 libatk1.0-0 libatk-bridge2.0-0 libgdk-pixbuf2.0-0 libgtk-3-0 libgbm1 libnss3 libasound2
+sudo apt install libatk1.0-0 libatk-bridge2.0-0 libgdk-pixbuf2.0-0 libgtk-3-0 libgbm1 libnss3 libasound2
 ```
 
 Some of these are also needed some of them only for the end to end tests.
@@ -133,16 +187,16 @@ source. It will run the `frontend` from a `backend`'s static server, and
 options can be appended to the main command as arguments.
 
 ```bash
-make image
+npm run image:build
 ```
 
 ### Custom container base images
 
 The Dockerfile takes a build argument for the base image used. You can specify the
-base image used using the IMAGE_BASE environment variable with make.
+base image used using the IMAGE_BASE environment variable.
 
 ```bash
-IMAGE_BASE=debian:latest make image
+IMAGE_BASE=debian:latest npm run image:build
 ```
 
 If no IMAGE_BASE is specified, then a default image is used (see Dockerfile for exact default image used).
@@ -167,7 +221,7 @@ If you want to make a new container image called `headlamp-k8s/headlamp:developm
 you can run it like this:
 
 ```bash
-$ DOCKER_IMAGE_VERSION=development make image
+$ DOCKER_IMAGE_VERSION=development npm run image:build
 ...
 Successfully tagged headlamp-k8s/headlamp:development
 
@@ -192,7 +246,7 @@ ones made in the local docker environment.
 
 ```bash
 eval $(minikube docker-env)
-DOCKER_IMAGE_VERSION=development make image
+DOCKER_IMAGE_VERSION=development npm run image:build
 ```
 
 #### Create a deployment yaml

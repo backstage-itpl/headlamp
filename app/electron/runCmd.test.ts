@@ -14,8 +14,14 @@
  * limitations under the License.
  */
 
-import { describe, expect, it } from '@jest/globals';
+import path from 'path';
+import { afterEach, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { checkPermissionSecret, validateCommandData } from './runCmd';
+
+vi.mock('./plugin-management', () => ({
+  defaultPluginsDir: vi.fn(() => '/plugins/default'),
+  defaultUserPluginsDir: vi.fn(() => '/plugins/user'),
+}));
 
 describe('checkPermissionSecret', () => {
   const baseCommandData = {
@@ -218,5 +224,65 @@ describe('validateCommandData', () => {
         permissionSecrets: { 'runCmd-scriptjs-myscript.js': 42 },
       })[0]
     ).toBe(true);
+  });
+});
+
+describe('runScript', () => {
+  const originalArgv = process.argv;
+  const originalExit = process.exit;
+  const originalConsoleError = console.error;
+  const originalResourcesPath = process.resourcesPath;
+
+  let exitMock: Mock;
+  let consoleErrorMock: Mock;
+  beforeEach(() => {
+    vi.resetModules();
+    // @ts-ignore this is fine for tests
+    process.resourcesPath = '/resources';
+
+    exitMock = vi.fn() as any;
+    // @ts-expect-error overriding for test
+    process.exit = exitMock;
+    consoleErrorMock = vi.fn();
+    console.error = consoleErrorMock;
+  });
+
+  afterEach(() => {
+    process.argv = originalArgv;
+    process.exit = originalExit;
+    console.error = originalConsoleError;
+    // @ts-ignore
+    process.resourcesPath = originalResourcesPath;
+    vi.restoreAllMocks();
+  });
+
+  const testScriptImport = async (scriptPath: string) => {
+    const resolvedPath = path.resolve(scriptPath);
+    process.argv = ['node', resolvedPath];
+    vi.doMock(resolvedPath, () => ({}));
+    const runCmdModule = await import('./runCmd');
+    runCmdModule.runScript();
+    expect(exitMock).not.toHaveBeenCalled();
+  };
+
+  it('imports the script when path is inside defaultPluginsDir', () =>
+    testScriptImport('/plugins/default/my-script.js'));
+
+  it('imports the script when path is inside defaultUserPluginsDir', () =>
+    testScriptImport('/plugins/user/my-script.js'));
+
+  it('imports the script when path is inside static .plugins dir', () =>
+    testScriptImport('/resources/.plugins/my-script.js'));
+
+  it('exits with error when script is outside allowed directories', async () => {
+    const scriptPath = path.resolve('/not-allowed/my-script.js');
+    process.argv = ['node', scriptPath];
+    vi.doMock(scriptPath, () => ({}));
+
+    const runCmdModule = await import('./runCmd');
+    runCmdModule.runScript();
+
+    expect(consoleErrorMock).toHaveBeenCalledTimes(1);
+    expect(exitMock).toHaveBeenCalledWith(1);
   });
 });

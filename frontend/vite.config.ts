@@ -18,6 +18,11 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import svgr from 'vite-plugin-svgr';
+import { viteStaticCopy } from "vite-plugin-static-copy";
+
+// Use environment variable for backend port, defaulting to 4466
+const backendPort = process.env.HEADLAMP_PORT || '4466';
+const backendTarget = `http://localhost:${backendPort}`;
 
 export default defineConfig({
   define: {
@@ -28,8 +33,61 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      '/api': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/clusters': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
       '/plugins': {
-        target: 'http://localhost:4466',
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/config': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/auth': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/oidc': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/oidc-callback': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/wsMultiplexer': {
+        target: backendTarget,
+        changeOrigin: true,
+        ws: true,
+      },
+      '/externalproxy': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/drain-node': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/drain-node-status': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/parseKubeConfig': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/cluster': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/metrics': {
+        target: backendTarget,
         changeOrigin: true,
       },
     },
@@ -50,6 +108,17 @@ export default defineConfig({
     react(),
     nodePolyfills({
       include: ['process', 'buffer', 'stream'],
+    }),
+    // Make sure we copy the minified monaco-editor source into the static folder
+    // since it's loaded dynamically and not bundled via ESM. We do it this way
+    // to support setting the localization language
+    viteStaticCopy({
+      targets: [
+        {
+          src: "node_modules/monaco-editor/min/vs",
+          dest: "assets", // copies to assets/vs
+        },
+      ],
     }),
   ],
   build: {

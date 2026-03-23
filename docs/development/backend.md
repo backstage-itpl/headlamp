@@ -18,13 +18,37 @@ redirects the requests to the defined proxies.
 The backend (Headlamp's server) can be quickly built using:
 
 ```bash
-make backend
+npm run backend:build
 ```
 
 Once built, it can be run in development mode (insecure / don't use in production) using:
 
 ```bash
-make run-backend
+npm run backend:start
+```
+
+## Logging configuration
+
+Headlamp’s backend supports configurable log levels to control verbosity.
+
+Log level can be configured using either a flag or an environment variable:
+- the log level: `--log-level` or env var `HEADLAMP_CONFIG_LOG_LEVEL`
+
+Supported Values:
+- `debug`
+- `info` (default)
+- `warn` 
+- `error`
+
+> **Note:** Headlamp uses zerolog defaults.  
+> Zerolog’s default log level is `info`, and Headlamp follows this behavior.
+
+### Examples
+
+Run with warning level:
+
+```bash
+./headlamp-server --log-level warn
 ```
 
 ## Lint
@@ -32,13 +56,13 @@ make run-backend
 To lint the backend/ code.
 
 ```bash
-make backend-lint
+npm run backend:lint
 ```
 
 This command can fix some lint issues.
 
 ```bash
-make backend-lint-fix
+npm run backend:lint:fix
 ```
 
 ## Format
@@ -46,23 +70,37 @@ make backend-lint-fix
 To format the backend code.
 
 ```bash
-make backend-format
+npm run backend:format
 ```
 
 ## Test
 
 ```bash
-make backend-test
+npm run backend:test
 ```
 
 Test coverage with a html report in the browser.
 
 ```bash
-make backend-coverage-html
+npm run backend:coverage:html
 ```
 
 To just print a simpler coverage report to the console.
 ```bash
-make backend-coverage
+npm run backend:coverage
 ```
+
+## Fuzz Testing
+
+Some backend functions include fuzz tests using Go's native fuzzing support. For example, the `SanitizeClusterName` function in `backend/pkg/auth` has a fuzz test.
+
+To run fuzz tests:
+
+```bash
+npm run backend:fuzz
+```
+
+This will run fuzz tests in the `backend/pkg/auth` package for 30 seconds. The fuzz corpus (interesting test cases discovered during fuzzing) is stored in `testdata/fuzz/` directories and committed to the repository for regression testing.
+
+For more information about Go fuzzing, see the [official Go fuzzing documentation](https://go.dev/security/fuzz/).
 

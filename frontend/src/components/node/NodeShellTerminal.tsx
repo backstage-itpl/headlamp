@@ -16,8 +16,6 @@
 
 import Box from '@mui/material/Box';
 import DialogContent from '@mui/material/DialogContent';
-import { FitAddon } from '@xterm/addon-fit';
-import { Terminal as XTerminal } from '@xterm/xterm';
 import _ from 'lodash';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -26,30 +24,14 @@ import {
   loadClusterSettings,
 } from '../../helpers/clusterSettings';
 import { getCluster } from '../../lib/cluster';
-import { apply, stream, StreamResultsCb } from '../../lib/k8s/apiProxy';
+import { apply } from '../../lib/k8s/api/v1/apply';
+import { stream, StreamResultsCb } from '../../lib/k8s/api/v1/streamingApi';
 import Node from '../../lib/k8s/node';
-import Pod, { KubePod } from '../../lib/k8s/pod';
-
-const decoder = new TextDecoder('utf-8');
-const encoder = new TextEncoder();
-
-enum Channel {
-  StdIn = 0,
-  StdOut,
-  StdErr,
-  ServerError,
-  Resize,
-}
+import { KubePod } from '../../lib/k8s/pod';
+import { Channel, useTerminalStream, XTerminalConnected } from '../../lib/k8s/useTerminalStream';
 
 interface NodeShellTerminalProps {
   item: Node;
-  onClose?: () => void;
-}
-
-interface XTerminalConnected {
-  xterm: XTerminal;
-  connected: boolean;
-  reconnectOnEnter: boolean;
   onClose?: () => void;
 }
 
@@ -64,7 +46,7 @@ const shellPod = (name: string, namespace: string, nodeName: string, nodeShellIm
     spec: {
       nodeName,
       restartPolicy: 'Never',
-      terminationGracePeriodSeconds: 0,
+      terminationGracePeriodSeconds: 30,
       hostPID: true,
       hostIPC: true,
       hostNetwork: true,
@@ -73,16 +55,29 @@ const shellPod = (name: string, namespace: string, nodeName: string, nodeShellIm
           operator: 'Exists',
         },
       ],
-      priorityClassName: 'system-node-critical',
       containers: [
         {
-          name: 'shell',
+          name: 'debugger',
           image: nodeShellImage,
-          securityContext: {
-            privileged: true,
+          terminationMessagePolicy: 'File',
+          tty: true,
+          stdin: true,
+          stdinOnce: true,
+          volumeMounts: [
+            {
+              mountPath: '/host',
+              name: 'host-root',
+            },
+          ],
+        },
+      ],
+      volumes: [
+        {
+          name: 'host-root',
+          hostPath: {
+            path: '/',
+            type: 'Directory',
           },
-          command: ['nsenter'],
-          args: ['-t', '1', '-m', '-u', '-i', '-n', 'sleep', '14000'],
         },
       ],
     },
@@ -90,9 +85,15 @@ const shellPod = (name: string, namespace: string, nodeName: string, nodeShellIm
 };
 
 function uniqueString() {
-  const timestamp = Date.now().toString(36);
-  const randomNum = Math.random().toString(36).substring(2, 5);
-  return `${timestamp}-${randomNum}`;
+  const alphabet = '23456789abcdefghjkmnpqrstuvwxyz';
+  let res = '';
+
+  for (let i = 0; i < 5; i++) {
+    const idx = Math.floor(Math.random() * alphabet.length);
+    res += alphabet[idx];
+  }
+
+  return res;
 }
 
 async function shell(item: Node, onExec: StreamResultsCb) {
@@ -105,25 +106,19 @@ async function shell(item: Node, onExec: StreamResultsCb) {
   const config = clusterSettings.nodeShellTerminal;
   const linuxImage = config?.linuxImage || DEFAULT_NODE_SHELL_LINUX_IMAGE;
   const namespace = config?.namespace || DEFAULT_NODE_SHELL_NAMESPACE;
-  const podName = `node-shell-${item.getName()}-${uniqueString()}`;
-  const kubePod = shellPod(podName, namespace, item.getName(), linuxImage!!);
+  const podName = `node-debugger-${item.getName()}-${uniqueString()}`;
+  const kubePod = shellPod(podName, namespace, item.getName(), linuxImage);
   try {
     await apply(kubePod);
   } catch (e) {
-    console.error('Error:NodeShell: creating pod', e);
+    console.error('Error:DebugNode: creating pod', e);
     return {};
   }
-  const command = [
-    'sh',
-    '-c',
-    '((clear && bash) || (clear && zsh) || (clear && ash) || (clear && sh))',
-  ];
   const tty = true;
   const stdin = true;
   const stdout = true;
   const stderr = true;
-  const commandStr = command.map(item => '&command=' + encodeURIComponent(item)).join('');
-  const url = `/api/v1/namespaces/${namespace}/pods/${podName}/exec?container=shell${commandStr}&stdin=${
+  const url = `/api/v1/namespaces/${namespace}/pods/${podName}/attach?container=debugger&stdin=${
     stdin ? 1 : 0
   }&stderr=${stderr ? 1 : 0}&stdout=${stdout ? 1 : 0}&tty=${tty ? 1 : 0}`;
   const additionalProtocols = [
@@ -132,159 +127,81 @@ async function shell(item: Node, onExec: StreamResultsCb) {
     'v2.channel.k8s.io',
     'channel.k8s.io',
   ];
-  const onClose = async () => {
-    const pod = new Pod(kubePod);
-    try {
-      await pod.delete();
-    } catch (e) {
-      console.error('Error:NodeShell: deleting pod', e);
-      return {};
-    }
-  };
   return {
     stream: stream(url, onExec, { additionalProtocols, isJson: false }),
-    onClose: onClose,
   };
 }
 
 export function NodeShellTerminal(props: NodeShellTerminalProps) {
   const { item, onClose } = props;
   const [terminalContainerRef, setTerminalContainerRef] = useState<HTMLElement | null>(null);
-  const xtermRef = useRef<XTerminalConnected | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const streamRef = useRef<any | null>(null);
+  const exitSentRef = useRef(false);
+  const pendingExitRef = useRef(false);
 
-  const wrappedOnClose = () => {
-    if (!!onClose) {
-      onClose();
+  const { xtermRef, streamRef, send } = useTerminalStream({
+    containerRef: terminalContainerRef,
+    connectStream: async onDataCallback => {
+      xtermRef.current?.xterm.writeln('Trying to open a shell');
+      const { stream } = await shell(item, onDataCallback);
+      return {
+        stream,
+      };
+    },
+    onClose: wrappedOnClose,
+    errorHandlers: {
+      isSuccessfulExit: isSuccessfulExitError,
+      isShellNotFound: isShellNotFoundError,
+      onConnectionFailed: shellConnectFailed,
+    },
+  });
+
+  const sendExitIfPossible = () => {
+    if (exitSentRef.current) {
+      return true;
     }
 
-    if (!!xtermRef.current?.onClose) {
-      xtermRef.current?.onClose();
+    const socket = streamRef.current?.getSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    send(Channel.StdIn, 'exit\r');
+    exitSentRef.current = true;
+    pendingExitRef.current = false;
+    setTimeout(() => streamRef.current?.cancel(), 1000);
+    return true;
+  };
+
+  const requestShellExit = (reason: string) => {
+    if (exitSentRef.current) {
+      return;
+    }
+
+    const sent = sendExitIfPossible();
+    if (!sent) {
+      console.debug('Queueing exit for shell (not yet connected)', { reason });
+      pendingExitRef.current = true;
+    } else {
+      console.debug('Exit command sent to shell', { reason });
     }
   };
 
-  // @todo: Give the real exec type when we have it.
-  function setupTerminal(containerRef: HTMLElement, xterm: XTerminal, fitAddon: FitAddon) {
-    if (!containerRef) {
-      return;
+  function wrappedOnClose() {
+    requestShellExit('dialog-close');
+    if (onClose) {
+      onClose();
     }
-
-    xterm.open(containerRef);
-
-    let lastKeyPressEvent: KeyboardEvent | null = null;
-    xterm.onData(data => {
-      let dataToSend = data;
-
-      // On MacOS with a German layout, the Alt+7 should yield a | character, but
-      // the onData event doesn't get it. So we need to add a custom key handler.
-      // No need to check for the actual platform because the key patterns should
-      // be good enough.
-      if (
-        data === '\u001b7' &&
-        lastKeyPressEvent?.key === '|' &&
-        lastKeyPressEvent.code === 'Digit7'
-      ) {
-        dataToSend = '|';
-      }
-
-      send(0, dataToSend);
-    });
-
-    xterm.onResize(size => {
-      send(4, `{"Width":${size.cols},"Height":${size.rows}}`);
-    });
-
-    // Allow copy/paste in terminal
-    xterm.attachCustomKeyEventHandler(arg => {
-      if (arg.type === 'keydown') {
-        lastKeyPressEvent = arg;
-      } else {
-        lastKeyPressEvent = null;
-      }
-
-      if (arg.ctrlKey && arg.type === 'keydown') {
-        if (arg.code === 'KeyC') {
-          const selection = xterm.getSelection();
-          if (selection) {
-            return false;
-          }
-        }
-        if (arg.code === 'KeyV') {
-          return false;
-        }
-      }
-
-      return true;
-    });
-
-    fitAddon.fit();
-  }
-
-  function send(channel: number, data: string) {
-    const socket = streamRef.current!.getSocket();
-
-    // We should only send data if the socket is ready.
-    if (!socket || socket.readyState !== 1) {
-      console.debug('Could not send data to exec: Socket not ready...', socket);
-      return;
-    }
-
-    const encoded = encoder.encode(data);
-    const buffer = new Uint8Array([channel, ...encoded]);
-
-    socket.send(buffer);
-  }
-
-  function onData(xtermc: XTerminalConnected, bytes: ArrayBuffer) {
-    const xterm = xtermc.xterm;
-    // Only show data from stdout, stderr and server error channel.
-    const channel: Channel = new Int8Array(bytes.slice(0, 1))[0];
-    if (channel < Channel.StdOut || channel > Channel.ServerError) {
-      return;
-    }
-
-    // The first byte is discarded because it just identifies whether
-    // this data is from stderr, stdout, or stdin.
-    const data = bytes.slice(1);
-    const text = decoder.decode(data);
-
-    // Send resize command to server once connection is establised.
-    if (!xtermc.connected) {
-      xterm.clear();
-      (async function () {
-        send(4, `{"Width":${xterm.cols},"Height":${xterm.rows}}`);
-      })();
-      // On server error, don't set it as connected
-      if (channel !== Channel.ServerError) {
-        xtermc.connected = true;
-        console.debug('Terminal is now connected');
-      }
-    }
-
-    if (isSuccessfulExitError(channel, text)) {
-      wrappedOnClose();
-
-      if (streamRef.current) {
-        streamRef.current?.cancel();
-      }
-
-      return;
-    }
-
-    if (isShellNotFoundError(channel, text)) {
-      shellConnectFailed(xtermc);
-      return;
-    }
-    xterm.write(text);
   }
 
   function isSuccessfulExitError(channel: number, text: string): boolean {
     // Linux container Error
-    if (channel === 3) {
+    if (channel === Channel.ServerError) {
       try {
         const error = JSON.parse(text);
         if (_.isEmpty(error.metadata) && error.status === 'Success') {
+          if (pendingExitRef.current && !exitSentRef.current) {
+            sendExitIfPossible();
+          }
           return true;
         }
       } catch {}
@@ -294,7 +211,7 @@ export function NodeShellTerminal(props: NodeShellTerminalProps) {
 
   function isShellNotFoundError(channel: number, text: string): boolean {
     // Linux container Error
-    if (channel === 3) {
+    if (channel === Channel.ServerError) {
       try {
         const error = JSON.parse(text);
         if (error.code === 500 && error.status === 'Failure' && error.reason === 'InternalError') {
@@ -303,7 +220,7 @@ export function NodeShellTerminal(props: NodeShellTerminalProps) {
       } catch {}
     }
     // Windows container Error
-    if (channel === 1) {
+    if (channel === Channel.StdOut) {
       if (text.includes('The system cannot find the file specified')) {
         return true;
       }
@@ -317,60 +234,17 @@ export function NodeShellTerminal(props: NodeShellTerminalProps) {
     xterm.write('Failed to connect…\r\n');
   }
 
-  useEffect(
-    () => {
-      // We need a valid container ref for the terminal to add itself to it.
-      if (terminalContainerRef === null) {
-        return;
-      }
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      requestShellExit('window-beforeunload');
+    };
 
-      if (xtermRef.current) {
-        xtermRef.current.xterm.dispose();
-        streamRef.current?.cancel();
-      }
+    window.addEventListener('beforeunload', handleBeforeUnload);
 
-      xtermRef.current = {
-        xterm: new XTerminal({
-          cursorBlink: true,
-          cursorStyle: 'underline',
-          scrollback: 10000,
-          rows: 30, // initial rows before fit
-          windowsMode: false,
-          allowProposedApi: true,
-        }),
-        connected: false,
-        reconnectOnEnter: false,
-      };
-
-      fitAddonRef.current = new FitAddon();
-      xtermRef.current.xterm.loadAddon(fitAddonRef.current);
-
-      (async function () {
-        xtermRef?.current?.xterm.writeln('Trying to open a shell');
-        const { stream, onClose } = await shell(item, (items: ArrayBuffer) =>
-          onData(xtermRef.current!, items)
-        );
-        streamRef.current = stream;
-        xtermRef.current!.onClose = onClose;
-
-        setupTerminal(terminalContainerRef, xtermRef.current!.xterm, fitAddonRef.current!);
-      })();
-
-      const handler = () => {
-        fitAddonRef.current!.fit();
-      };
-
-      window.addEventListener('resize', handler);
-
-      return function cleanup() {
-        xtermRef.current?.xterm.dispose();
-        streamRef.current?.cancel();
-        window.removeEventListener('resize', handler);
-      };
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [terminalContainerRef]
-  );
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   return (
     <DialogContent

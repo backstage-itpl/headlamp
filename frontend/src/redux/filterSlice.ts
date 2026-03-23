@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import type { PayloadAction } from '@reduxjs/toolkit';
+import { createSlice } from '@reduxjs/toolkit';
 import { JSONPath } from 'jsonpath-plus';
 import { useMemo } from 'react';
 import { useSelector } from 'react-redux';
-import { KubeEvent } from '../lib/k8s/event';
-import { KubeObjectInterface } from '../lib/k8s/KubeObject';
+import type { KubeEvent } from '../lib/k8s/event';
+import type { KubeObjectInterface } from '../lib/k8s/KubeObject';
+import { getSavedNamespaces, saveNamespaces } from '../lib/storage';
 
 export interface FilterState {
   /** The namespaces to filter on. */
@@ -27,7 +29,7 @@ export interface FilterState {
 }
 
 export const initialState: FilterState = {
-  namespaces: new Set(),
+  namespaces: new Set(getSavedNamespaces()),
 };
 
 /**
@@ -138,13 +140,21 @@ const filterSlice = createSlice({
      * Sets the namespace filter with an array of strings.
      */
     setNamespaceFilter(state, action: PayloadAction<string[]>) {
-      state.namespaces = new Set(action.payload);
+      const namespaces = action.payload
+        .map(ns => (typeof ns === 'string' ? ns.trim() : ''))
+        .filter(Boolean);
+
+      const namespacesSet = new Set(namespaces);
+      state.namespaces = namespacesSet;
+
+      saveNamespaces([...namespacesSet]);
     },
     /**
      * Resets the filter state.
      */
     resetFilter(state) {
       state.namespaces = new Set();
+      saveNamespaces([]);
     },
   },
 });

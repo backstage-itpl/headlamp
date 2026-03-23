@@ -47,30 +47,10 @@
                 <h1
                   class="MuiTypography-root MuiTypography-h1 MuiTypography-noWrap css-yeaech-MuiTypography-root"
                 >
-                  Endpoint
+                  Endpoint: my-endpoint
                 </h1>
                 <div
                   class="MuiBox-root css-ldp2l3"
-                />
-              </div>
-            </div>
-            <div
-              class="MuiGrid-root MuiGrid-item css-13i4rnv-MuiGrid-root"
-            >
-              <div
-                class="MuiGrid-root MuiGrid-container MuiGrid-item css-ztq4zc-MuiGrid-root"
-              >
-                <div
-                  class="MuiGrid-root MuiGrid-item css-13i4rnv-MuiGrid-root"
-                />
-                <div
-                  class="MuiGrid-root MuiGrid-item css-13i4rnv-MuiGrid-root"
-                />
-                <div
-                  class="MuiGrid-root MuiGrid-item css-13i4rnv-MuiGrid-root"
-                />
-                <div
-                  class="MuiGrid-root MuiGrid-item css-13i4rnv-MuiGrid-root"
                 />
               </div>
             </div>

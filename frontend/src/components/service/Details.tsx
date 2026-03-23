@@ -21,6 +21,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router-dom';
 import Endpoint from '../../lib/k8s/endpoints';
+import EndpointSlice from '../../lib/k8s/endpointSlices';
 import Service from '../../lib/k8s/service';
 import Empty from '../common/EmptyContent';
 import { ValueLabel } from '../common/Label';
@@ -29,6 +30,7 @@ import { DetailsGrid, MetadataDictGrid } from '../common/Resource';
 import PortForward from '../common/Resource/PortForward';
 import { SectionBox } from '../common/SectionBox';
 import SimpleTable from '../common/SimpleTable';
+import A8RServiceInfo from './A8RServiceInfo';
 
 export default function ServiceDetails(props: {
   name?: string;
@@ -39,10 +41,18 @@ export default function ServiceDetails(props: {
   const { name = params.name, namespace = params.namespace, cluster } = props;
   const { t } = useTranslation(['glossary', 'translation']);
 
-  const [endpoints, endpointsError] = Endpoint.useList({ namespace });
+  const [endpoints, endpointsError] = Endpoint.useList({ namespace, cluster });
+  const [endpointSlices, endpointSlicesError] = EndpointSlice.useList({ namespace, cluster });
 
   function getOwnedEndpoints(item: Service) {
     return item ? endpoints?.filter(endpoint => endpoint.getName() === item.getName()) : null;
+  }
+  function getOwnedEndpointSlices(item: Service) {
+    return item
+      ? endpointSlices?.filter(
+          endpointSlice => endpointSlice.getOwnerServiceName() === item.getName()
+        )
+      : null;
   }
 
   return (
@@ -73,8 +83,29 @@ export default function ServiceDetails(props: {
           },
         ]
       }
-      extraSections={item =>
-        item && [
+      extraSections={item => {
+        if (!item) {
+          return [];
+        }
+
+        const annotations = item.metadata?.annotations ?? {};
+        const hasA8r = Object.keys(annotations).some(key => key.startsWith('a8r.io/'));
+
+        return [
+          // Conditionally add Service Information
+          ...(hasA8r
+            ? [
+                {
+                  id: 'headlamp.service-a8r-info',
+                  section: (
+                    <SectionBox title={t('Service Information')}>
+                      <A8RServiceInfo annotations={annotations} />
+                    </SectionBox>
+                  ),
+                },
+              ]
+            : []),
+
           {
             id: 'headlamp.service-ports',
             section: (
@@ -82,23 +113,17 @@ export default function ServiceDetails(props: {
                 <SimpleTable
                   data={item.spec.ports}
                   columns={[
-                    {
-                      label: t('Protocol'),
-                      datum: 'protocol',
-                    },
-                    {
-                      label: t('translation|Name'),
-                      datum: 'name',
-                    },
+                    { label: t('Protocol'), datum: 'protocol' },
+                    { label: t('translation|Name'), datum: 'name' },
                     {
                       label: t('Ports'),
                       getter: ({ port, targetPort }) => (
-                        <React.Fragment>
+                        <>
                           <ValueLabel>{port}</ValueLabel>
                           <InlineIcon icon="mdi:chevron-right" />
                           <ValueLabel>{targetPort}</ValueLabel>
                           <PortForward containerPort={targetPort} resource={item} />
-                        </React.Fragment>
+                        </>
                       ),
                     },
                   ]}
@@ -107,6 +132,7 @@ export default function ServiceDetails(props: {
               </SectionBox>
             ),
           },
+
           {
             id: 'headlamp.service-endpoints',
             section: (
@@ -125,8 +151,8 @@ export default function ServiceDetails(props: {
                         label: t('translation|Addresses'),
                         getter: endpoint => (
                           <Box display="flex" flexDirection="column">
-                            {endpoint.getAddresses().map((address: string) => (
-                              <ValueLabel>{address}</ValueLabel>
+                            {endpoint.getAddresses().map((address: string, index: number) => (
+                              <ValueLabel key={index}>{address}</ValueLabel>
                             ))}
                           </Box>
                         ),
@@ -138,8 +164,48 @@ export default function ServiceDetails(props: {
               </SectionBox>
             ),
           },
-        ]
-      }
+
+          {
+            id: 'headlamp.service-endpointslices',
+            section: (
+              <SectionBox title={t('Endpoint Slices')}>
+                {endpointSlicesError ? (
+                  <Empty color="error">{endpointSlicesError.toString()}</Empty>
+                ) : (
+                  <SimpleTable
+                    data={getOwnedEndpointSlices(item) ?? null}
+                    columns={[
+                      {
+                        label: t('translation|Name'),
+                        getter: endpointSlice => <Link kubeObject={endpointSlice} />,
+                      },
+                      {
+                        label: t('translation|Addresses'),
+                        getter: endpointSlice => (
+                          <Box display="flex" flexDirection="column">
+                            {endpointSlice.spec.endpoints.map((ep: any, index: number) => (
+                              <ValueLabel key={index}>{ep.addresses.join(',')}</ValueLabel>
+                            ))}
+                          </Box>
+                        ),
+                      },
+                      {
+                        label: t('Ports'),
+                        getter: endpoint => endpoint.ports?.join(', ') ?? '',
+                      },
+                      {
+                        label: t('translation|Address Type'),
+                        getter: endpoint => endpoint?.spec?.addressType ?? '',
+                      },
+                    ]}
+                    reflectInURL="endpoints"
+                  />
+                )}
+              </SectionBox>
+            ),
+          },
+        ];
+      }}
     />
   );
 }

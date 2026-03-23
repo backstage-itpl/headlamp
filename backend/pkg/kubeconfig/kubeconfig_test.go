@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/config"
@@ -15,9 +16,36 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd/api"
 )
 
-const kubeConfigFilePath = "./test_data/kubeconfig1"
+var kubeConfigFilePath = filepath.Join(getTestDataPath(), "kubeconfig1")
+
+// Helper functions for creating pointers to primitive types.
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+// getTestDataPath returns the absolute path to the test data directory.
+func getTestDataPath() string {
+	// Get the current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+
+	// If we're in the kubeconfig package directory, use relative path
+	if filepath.Base(cwd) == "kubeconfig" {
+		return "./test_data"
+	}
+
+	// Otherwise, assume we're in the workspace root
+	return "./pkg/kubeconfig/test_data"
+}
 
 func TestLoadAndStoreKubeConfigs(t *testing.T) {
 	contextStore := kubeconfig.NewContextStore()
@@ -140,7 +168,157 @@ func TestLoadContextsWithDuplicateNames(t *testing.T) {
 	assert.Equal(t, 2, count, "Expected 2 contexts with the same name")
 }
 
+func TestOIDCConfigWithCACertificate(t *testing.T) {
+	t.Run("oidc_with_ca_file", testOIDCConfigWithCAFile)
+	t.Run("oidc_with_ca_data", testOIDCConfigWithCAData)
+}
+
+func testOIDCConfigWithCAFile(t *testing.T) {
+	// Create a temporary kubeconfig with the correct absolute path to the CA file
+	caFilePath := filepath.Join(getTestDataPath(), "oidc_ca.pem")
+	tempKubeconfig := createTempKubeconfig(t, fmt.Sprintf(`apiVersion: v1
+clusters:
+- cluster:
+    server: https://127.0.0.1:6443
+  name: oidc-test-cluster
+contexts:
+- context:
+    cluster: oidc-test-cluster
+    user: oidc-test-user
+  name: oidc-test-context
+current-context: oidc-test-context
+kind: Config
+users:
+- name: oidc-test-user
+  user:
+    auth-provider:
+      config:
+        client-id: "test-client-id"
+        client-secret: "test-client-secret"
+        idp-issuer-url: "https://oidc.example.com"
+        scope: "profile,email"
+        idp-certificate-authority: "%s"
+      name: oidc`, caFilePath))
+
+	defer os.Remove(tempKubeconfig)
+
+	contexts, contextErrors, err := kubeconfig.LoadContextsFromFile(tempKubeconfig, kubeconfig.KubeConfig)
+	require.NoError(t, err, "Expected no error for valid OIDC kubeconfig")
+	require.Empty(t, contextErrors, "Expected no context errors for valid OIDC kubeconfig")
+	require.Equal(t, 1, len(contexts), "Expected 1 context from OIDC kubeconfig")
+
+	context := contexts[0]
+	require.Equal(t, "oidc-test-context", context.Name, "Expected context name to be 'oidc-test-context'")
+
+	// Test OIDC config parsing
+	oidcConfig, err := context.OidcConfig()
+	require.NoError(t, err, "Expected no error getting OIDC config")
+	require.NotNil(t, oidcConfig, "Expected OIDC config to be not nil")
+
+	// Verify basic OIDC fields
+	assert.Equal(t, "test-client-id", oidcConfig.ClientID)
+	assert.Equal(t, "test-client-secret", oidcConfig.ClientSecret)
+	assert.Equal(t, "https://oidc.example.com", oidcConfig.IdpIssuerURL)
+	assert.Equal(t, []string{"profile", "email"}, oidcConfig.Scopes)
+
+	// Verify CA certificate is loaded from file
+	require.NotNil(t, oidcConfig.CACert, "Expected CA certificate to be loaded")
+	assert.Contains(t, *oidcConfig.CACert, "-----BEGIN CERTIFICATE-----", "Expected PEM certificate content")
+	assert.Contains(t, *oidcConfig.CACert, "-----END CERTIFICATE-----", "Expected PEM certificate content")
+}
+
+func testOIDCConfigWithCAData(t *testing.T) {
+	kubeConfigFile := filepath.Join(getTestDataPath(), "kubeconfig_oidc_ca_data")
+
+	contexts, contextErrors, err := kubeconfig.LoadContextsFromFile(kubeConfigFile, kubeconfig.KubeConfig)
+	require.NoError(t, err, "Expected no error for valid OIDC kubeconfig with CA data")
+	require.Empty(t, contextErrors, "Expected no context errors for valid OIDC kubeconfig with CA data")
+	require.Equal(t, 1, len(contexts), "Expected 1 context from OIDC kubeconfig with CA data")
+
+	context := contexts[0]
+	require.Equal(t, "oidc-test-context", context.Name, "Expected context name to be 'oidc-test-context'")
+
+	// Test OIDC config parsing
+	oidcConfig, err := context.OidcConfig()
+	require.NoError(t, err, "Expected no error getting OIDC config")
+	require.NotNil(t, oidcConfig, "Expected OIDC config to be not nil")
+
+	// Verify basic OIDC fields
+	assert.Equal(t, "test-client-id", oidcConfig.ClientID)
+	assert.Equal(t, "test-client-secret", oidcConfig.ClientSecret)
+	assert.Equal(t, "https://oidc.example.com", oidcConfig.IdpIssuerURL)
+	assert.Equal(t, []string{"profile", "email"}, oidcConfig.Scopes)
+
+	// Verify CA certificate is loaded from base64 data and properly decoded
+	require.NotNil(t, oidcConfig.CACert, "Expected CA certificate to be loaded from base64 data")
+	assert.Contains(t, *oidcConfig.CACert, "-----BEGIN CERTIFICATE-----", "Expected decoded PEM certificate content")
+	assert.Contains(t, *oidcConfig.CACert, "-----END CERTIFICATE-----", "Expected decoded PEM certificate content")
+}
+
+func TestOIDCConfigWithoutCA(t *testing.T) {
+	t.Run("oidc_without_ca", func(t *testing.T) {
+		// Create a minimal kubeconfig without CA certificate
+		tempFile := createTempKubeconfig(t, `apiVersion: v1
+clusters:
+- cluster:
+    server: https://127.0.0.1:6443
+  name: test-cluster
+contexts:
+- context:
+    cluster: test-cluster
+    user: test-user
+  name: test-context
+current-context: test-context
+kind: Config
+users:
+- name: test-user
+  user:
+    auth-provider:
+      config:
+        client-id: "test-client-id"
+        client-secret: "test-client-secret"
+        idp-issuer-url: "https://oidc.example.com"
+        scope: "profile,email"
+      name: oidc`)
+
+		defer os.Remove(tempFile)
+
+		contexts, contextErrors, err := kubeconfig.LoadContextsFromFile(tempFile, kubeconfig.KubeConfig)
+		require.NoError(t, err, "Expected no error for valid OIDC kubeconfig without CA")
+		require.Empty(t, contextErrors, "Expected no context errors for valid OIDC kubeconfig without CA")
+		require.Equal(t, 1, len(contexts), "Expected 1 context from OIDC kubeconfig without CA")
+
+		context := contexts[0]
+		oidcConfig, err := context.OidcConfig()
+		require.NoError(t, err, "Expected no error getting OIDC config")
+		require.NotNil(t, oidcConfig, "Expected OIDC config to be not nil")
+
+		// Verify CA certificate is nil when not provided
+		assert.Nil(t, oidcConfig.CACert, "Expected CA certificate to be nil when not provided")
+	})
+}
+
+// createTempKubeconfig creates a temporary kubeconfig file for testing.
+func createTempKubeconfig(t *testing.T, content string) string {
+	t.Helper()
+
+	tempFile, err := os.CreateTemp("", "kubeconfig_test_*.yaml")
+	require.NoError(t, err, "Failed to create temp file")
+
+	_, err = tempFile.WriteString(content)
+	require.NoError(t, err, "Failed to write to temp file")
+
+	err = tempFile.Close()
+	require.NoError(t, err, "Failed to close temp file")
+
+	return tempFile.Name()
+}
+
 func TestContext(t *testing.T) {
+	if os.Getenv("HEADLAMP_RUN_INTEGRATION_TESTS") != "true" {
+		t.Skip("skipping integration test")
+	}
+
 	kubeConfigFile := config.GetDefaultKubeConfigPath()
 
 	configStore := kubeconfig.NewContextStore()
@@ -393,6 +571,92 @@ func TestErrorTypes(t *testing.T) {
 			"Error in cluster 'test-cluster': invalid base64"
 		assert.Equal(t, expected, err.Error())
 	})
+}
+
+func newTestContext() *kubeconfig.Context {
+	return &kubeconfig.Context{
+		Name:        "test-context",
+		KubeContext: &api.Context{Cluster: "test-cluster", AuthInfo: "test-user", Namespace: "test-ns"},
+		Cluster:     &api.Cluster{Server: "https://test.example.com", CertificateAuthorityData: []byte("test-ca")},
+		AuthInfo:    &api.AuthInfo{Token: "test-token"},
+		Source:      kubeconfig.KubeConfig,
+		OidcConf: &kubeconfig.OidcConfig{
+			ClientID:      "test-client-id",
+			ClientSecret:  "test-client-secret",
+			IdpIssuerURL:  "https://oidc.example.com",
+			Scopes:        []string{"profile", "email"},
+			SkipTLSVerify: boolPtr(true),
+			CACert:        stringPtr("test-ca-cert"),
+		},
+		Internal:       true,
+		Error:          "test-error",
+		KubeConfigPath: "/path/to/kubeconfig",
+		ClusterID:      "test-cluster-id",
+	}
+}
+
+func TestContextCopyReturnsDeepCopy(t *testing.T) {
+	original := newTestContext()
+	copied := original.Copy()
+
+	assert.Equal(t, original, copied)
+	assert.NotSame(t, original, copied)
+}
+
+func TestContextCopyExcludesProxy(t *testing.T) {
+	copied := newTestContext().Copy()
+
+	assert.NotNil(t, copied)
+}
+
+func TestContextCopyKeepsNestedStructuresIndependent(t *testing.T) {
+	original := newTestContext()
+	copied := original.Copy()
+
+	original.KubeContext.Namespace = "modified-ns"
+	original.Cluster.Server = "https://modified.example.com"
+	original.AuthInfo.Token = "modified-token"
+	original.OidcConf.ClientID = "modified-client-id"
+	original.OidcConf.Scopes[0] = "modified-scope"
+	original.OidcConf.Scopes = append(original.OidcConf.Scopes, "new-scope")
+	*original.OidcConf.SkipTLSVerify = false
+	*original.OidcConf.CACert = "modified-ca-cert"
+
+	assert.Equal(t, "test-ns", copied.KubeContext.Namespace)
+	assert.Equal(t, "https://test.example.com", copied.Cluster.Server)
+	assert.Equal(t, "test-token", copied.AuthInfo.Token)
+	assert.Equal(t, "test-client-id", copied.OidcConf.ClientID)
+	assert.Equal(t, []string{"profile", "email"}, copied.OidcConf.Scopes)
+	assert.True(t, *copied.OidcConf.SkipTLSVerify)
+	assert.Equal(t, "test-ca-cert", *copied.OidcConf.CACert)
+}
+
+func TestContextCopyWithNilOidcConf(t *testing.T) {
+	original := &kubeconfig.Context{
+		Name: "test-context-nil-oidc",
+	}
+
+	copied := original.Copy()
+
+	assert.Equal(t, original, copied)
+	assert.NotSame(t, original, copied)
+	assert.Nil(t, copied.OidcConf)
+}
+
+func TestContextCopyWithNilNestedStructures(t *testing.T) {
+	original := &kubeconfig.Context{
+		Name:     "test-context-nil",
+		OidcConf: nil,
+	}
+
+	copied := original.Copy()
+
+	assert.Equal(t, original, copied)
+	assert.NotSame(t, original, copied)
+	assert.Nil(t, copied.KubeContext)
+	assert.Nil(t, copied.Cluster)
+	assert.Nil(t, copied.AuthInfo)
+	assert.Nil(t, copied.OidcConf)
 }
 
 func TestCustomObjectDeepCopy(t *testing.T) {

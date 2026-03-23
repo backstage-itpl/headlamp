@@ -16,6 +16,7 @@
 
 export * from './CircularChart';
 export * from './MetadataDisplay';
+export * from './EnvVarGrid';
 export * from './Resource';
 export * as ResourceTable from './ResourceTable';
 export * from './ResourceListView';
@@ -24,6 +25,8 @@ export * from './AuthVisible';
 export { default as AuthVisible } from './AuthVisible';
 export * from './CreateButton';
 export { default as CreateButton } from './CreateButton';
+export * from './CopyButton';
+export { default as CopyButton } from './CopyButton';
 export * from './DeleteButton';
 export { default as DeleteButton } from './DeleteButton';
 export * from './DocsViewer';
@@ -42,6 +45,10 @@ export * from './ResourceTableColumnChooser';
 export { default as ResourceTableColumnChooser } from './ResourceTableColumnChooser';
 export { addResourceTableColumnsProcessor } from './resourceTableSlice';
 export * from './RestartButton';
+export * from './RollbackButton';
+export * from './RollbackDialog';
+export { default as RollbackDialog } from './RollbackDialog';
+export { default as RevisionHistorySection } from './RevisionHistorySection';
 export * from './ScaleButton';
 export * from './LogsButton';
 export { default as ScaleButton } from './ScaleButton';

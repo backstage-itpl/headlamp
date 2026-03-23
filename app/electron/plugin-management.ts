@@ -141,7 +141,7 @@ export class PluginManager {
   /**
    * Installs a plugin from the specified URL.
    * @param {string} URL - The URL of the plugin to install.
-   * @param {string} [destinationFolder=defaultPluginsDir()] - The folder where the plugin will be installed.
+   * @param {string} [destinationFolder=defaultUserPluginsDir()] - The folder where the plugin will be installed.
    * @param {string} [headlampVersion=""] - The version of Headlamp for compatibility checking.
    * @param {function} [progressCallback=null] - Optional callback for progress updates.
    * @param {AbortSignal} [signal=null] - Optional AbortSignal for cancellation.
@@ -149,7 +149,7 @@ export class PluginManager {
    */
   static async install(
     URL: string,
-    destinationFolder: string = defaultPluginsDir(),
+    destinationFolder: string = defaultUserPluginsDir(),
     headlampVersion: string = '',
     progressCallback: null | ProgressCallback = null,
     signal: AbortSignal | null = null
@@ -178,7 +178,7 @@ export class PluginManager {
   /**
    * Installs a plugin from the given plugin data.
    * @param {PluginData} pluginData - The plugin data from which to install the plugin.
-   * @param {string} [destinationFolder=defaultPluginsDir()] - The folder where the plugin will be installed.
+   * @param {string} [destinationFolder=defaultUserPluginsDir()] - The folder where the plugin will be installed.
    * @param {string} [headlampVersion=""] - The version of Headlamp for compatibility checking.
    * @param {function} [progressCallback=null] - Optional callback for progress updates.
    * @param {AbortSignal} [signal=null] - Optional AbortSignal for cancellation.
@@ -186,7 +186,7 @@ export class PluginManager {
    */
   static async installFromPluginPkg(
     pluginData: ArtifactHubHeadlampPkg,
-    destinationFolder = defaultPluginsDir(),
+    destinationFolder = defaultUserPluginsDir(),
     headlampVersion = '',
     progressCallback: null | ProgressCallback = null,
     signal: AbortSignal | null = null
@@ -230,7 +230,7 @@ export class PluginManager {
   /**
    * Updates an installed plugin to the latest version.
    * @param {string} pluginName - The name of the plugin to update.
-   * @param {string} [destinationFolder=defaultPluginsDir()] - The folder where the plugin is installed.
+   * @param {string} [destinationFolder=defaultUserPluginsDir()] - The folder where the plugin is installed.
    * @param {string} [headlampVersion=""] - The version of Headlamp for compatibility checking.
    * @param {null | ProgressCallback} [progressCallback=null] - Optional callback for progress updates.
    * @param {AbortSignal} [signal=null] - Optional AbortSignal for cancellation.
@@ -238,7 +238,7 @@ export class PluginManager {
    */
   static async update(
     pluginName: string,
-    destinationFolder: string = defaultPluginsDir(),
+    destinationFolder: string = defaultUserPluginsDir(),
     headlampVersion: string = '',
     progressCallback: null | ProgressCallback = null,
     signal: AbortSignal | null = null
@@ -306,13 +306,13 @@ export class PluginManager {
   /**
    * Uninstalls a plugin from the specified folder.
    * @param {string} name - The name of the plugin to uninstall.
-   * @param {string} [folder=defaultPluginsDir()] - The folder where the plugin is installed.
+   * @param {string} [folder=defaultUserPluginsDir()] - The folder where the plugin is installed.
    * @param {function} [progressCallback=null] - Optional callback for progress updates.
    * @returns {void}
    */
   static uninstall(
     name: string,
-    folder = defaultPluginsDir(),
+    folder = defaultUserPluginsDir(),
     progressCallback: null | ProgressCallback = null
   ) {
     try {
@@ -1021,6 +1021,20 @@ export function defaultPluginsDir() {
 }
 
 /**
+ * Returns the default directory where user-installed plugins are stored.
+ * If the data path exists, it is used as the base directory.
+ * Otherwise, the config path is used as the base directory.
+ * The 'user-plugins' subdirectory of the base directory is returned.
+ *
+ * @returns {string} The path to the default user-plugins directory.
+ */
+export function defaultUserPluginsDir() {
+  const paths = envPaths('Headlamp', { suffix: '' });
+  const configDir = fs.existsSync(paths.data) ? paths.data : paths.config;
+  return path.join(configDir, 'user-plugins');
+}
+
+/**
  * Checks if a given folder is a valid plugin bin folder.
  *
  * @param {string} folder - The path to the folder to check. Should not include /bin in the path.
@@ -1062,10 +1076,15 @@ export function getPluginBinDirectories(pluginsDir: string): string[] {
             for (const file of files) {
               const filePath = path.join(binDir, file);
               // Skip directories
-              if (fs.statSync(filePath).isDirectory()) {
+              const stat = fs.statSync(filePath);
+              if (stat.isDirectory()) {
                 continue;
               }
-              fs.chmodSync(filePath, 0o755); // rwx r-x r-x
+              const currentMode = stat.mode & 0o777;
+              if (currentMode !== 0o755) {
+                console.log(`Setting executable permissions for ${filePath}`);
+                fs.chmodSync(filePath, 0o755); // rwx r-x r-x
+              }
             }
           } catch (err) {
             console.error(`Error setting executable permissions in ${binDir}:`, err);

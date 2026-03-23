@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('desktopApi', {
       'plugin-manager',
       'request-backend-token',
       'request-plugin-permission-secrets',
+      'open-plugin-folder',
+      'request-backend-port',
+      'cluster-changed',
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data);
@@ -47,6 +50,8 @@ contextBridge.exposeInMainWorld('desktopApi', {
       'plugin-manager',
       'backend-token',
       'plugin-permission-secrets',
+      'open-about-dialog',
+      'backend-port',
     ];
     if (validChannels.includes(channel)) {
       // Deliberately strip event as it includes `sender`
@@ -56,5 +61,30 @@ contextBridge.exposeInMainWorld('desktopApi', {
 
   removeListener: (channel: string, func: (...args: unknown[]) => void) => {
     ipcRenderer.removeListener(channel, func);
+  },
+
+  // @todo: move these to the send receive pattern above, restricted to ai-assistant only.
+  // @todo: do not enable if environment variable disabling mcp is set.
+  // MCP client APIs
+  mcp: {
+    executeTool: (toolName: string, args: Record<string, any>, toolCallId?: string) =>
+      ipcRenderer.invoke('mcp-execute-tool', { toolName, args, toolCallId }),
+    getStatus: () => ipcRenderer.invoke('mcp-get-status'),
+    resetClient: () => ipcRenderer.invoke('mcp-reset-client'),
+    getConfig: () => ipcRenderer.invoke('mcp-get-config'),
+    updateConfig: (config: any) => ipcRenderer.invoke('mcp-update-config', config),
+    getToolsConfig: () => ipcRenderer.invoke('mcp-get-tools-config'),
+    updateToolsConfig: (config: any) => ipcRenderer.invoke('mcp-update-tools-config', config),
+    setToolEnabled: (serverName: string, toolName: string, enabled: boolean) =>
+      ipcRenderer.invoke('mcp-set-tool-enabled', { serverName, toolName, enabled }),
+    getToolStats: (serverName: string, toolName: string) =>
+      ipcRenderer.invoke('mcp-get-tool-stats', { serverName, toolName }),
+    clusterChange: (cluster: string | null) =>
+      ipcRenderer.invoke('mcp-cluster-change', { cluster }),
+  },
+
+  // Notify cluster change (for MCP server restart)
+  notifyClusterChange: (cluster: string | null) => {
+    ipcRenderer.send('cluster-changed', cluster);
   },
 });

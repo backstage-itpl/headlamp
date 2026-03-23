@@ -16,9 +16,10 @@
 
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
+import Fade from '@mui/material/Fade';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { ApiError } from '../../lib/k8s/apiProxy';
+import { ApiError } from '../../lib/k8s/api/v2/ApiError';
 import { KubeContainerStatus } from '../../lib/k8s/cluster';
 import Pod from '../../lib/k8s/pod';
 import { METRIC_REFETCH_INTERVAL_MS, PodMetrics } from '../../lib/k8s/PodMetrics';
@@ -60,7 +61,18 @@ export function makePodStatusLabel(pod: Pod, showContainerStatus: boolean = true
   const containerIndicators = containerStatuses.map((cs, index) => {
     const { color, tooltip } = getContainerDisplayStatus(cs);
     return (
-      <LightTooltip title={tooltip} key={index}>
+      <LightTooltip
+        title={tooltip}
+        key={index}
+        TransitionComponent={Fade}
+        TransitionProps={{ timeout: 0 }}
+        slotProps={{
+          popper: {
+            modifiers: [{ name: 'computeStyles', options: { gpuAcceleration: false } }],
+          },
+          tooltip: { sx: { maxWidth: 'none', willChange: 'opacity' } },
+        }}
+      >
         <Icon icon="mdi:circle" style={{ color }} width="1rem" height="1rem" />
       </LightTooltip>
     );
@@ -68,7 +80,18 @@ export function makePodStatusLabel(pod: Pod, showContainerStatus: boolean = true
 
   return (
     <Box display="flex" alignItems="center" gap={1}>
-      <LightTooltip title={tooltip} interactive>
+      <LightTooltip
+        title={tooltip}
+        interactive
+        TransitionComponent={Fade}
+        TransitionProps={{ timeout: 0 }}
+        slotProps={{
+          popper: {
+            modifiers: [{ name: 'computeStyles', options: { gpuAcceleration: false } }],
+          },
+          tooltip: { sx: { maxWidth: 'none', willChange: 'opacity' } },
+        }}
+      >
         <Box display="inline">
           <StatusLabel status={status}>
             {(status === 'warning' || status === 'error') && (
@@ -211,6 +234,7 @@ export function PodListRenderer(props: PodListProps) {
         {
           label: t('Restarts'),
           gridTemplate: 'min-content',
+          disableFiltering: true,
           getValue: pod => {
             const { restarts, lastRestartDate } = pod.getDetailedStatus();
             return lastRestartDate.getTime() !== 0
@@ -225,6 +249,7 @@ export function PodListRenderer(props: PodListProps) {
           id: 'ready',
           gridTemplate: 'min-content',
           label: t('translation|Ready'),
+          disableFiltering: true,
           getValue: pod => {
             const podRow = pod.getDetailedStatus();
             return `${podRow.readyContainers}/${podRow.totalContainers}`;
@@ -233,8 +258,9 @@ export function PodListRenderer(props: PodListProps) {
         {
           id: 'status',
           gridTemplate: 'min-content',
+          filterVariant: 'multi-select',
           label: t('translation|Status'),
-          getValue: pod => getPodStatus(pod) + '' + pod.getDetailedStatus().reason,
+          getValue: pod => pod.getDetailedStatus().reason,
           render: makePodStatusLabel,
         },
         ...(metrics?.length
@@ -243,6 +269,7 @@ export function PodListRenderer(props: PodListProps) {
                 id: 'cpu',
                 label: t('CPU'),
                 gridTemplate: 'min-content',
+                disableFiltering: true,
                 render: (pod: Pod) => {
                   const cpu = getCpuUsage(pod);
                   if (cpu === undefined) return;
@@ -275,12 +302,16 @@ export function PodListRenderer(props: PodListProps) {
                   }
 
                   return (
-                    <Box display="flex" alignItems="center">
+                    <Box display="flex" alignItems="center" width="100%">
                       <span style={{ whiteSpace: 'nowrap' }}>{`${aValue} ${aUnit}`}</span>
                       {tooltipLines.length > 0 && (
-                        <TooltipIcon>
-                          <span style={{ whiteSpace: 'pre-line' }}>{tooltipLines.join('\n')}</span>
-                        </TooltipIcon>
+                        <Box component="span" sx={{ display: 'inline-flex', ml: 'auto' }}>
+                          <TooltipIcon>
+                            <span style={{ whiteSpace: 'pre-line' }}>
+                              {tooltipLines.join('\n')}
+                            </span>
+                          </TooltipIcon>
+                        </Box>
                       )}
                     </Box>
                   );
@@ -291,6 +322,7 @@ export function PodListRenderer(props: PodListProps) {
                 id: 'memory',
                 label: t('Memory'),
                 gridTemplate: 'min-content',
+                disableFiltering: true,
                 render: (pod: Pod) => {
                   const memory = getMemoryUsage(pod);
                   if (memory === undefined) return;
@@ -322,12 +354,16 @@ export function PodListRenderer(props: PodListProps) {
                   }
 
                   return (
-                    <Box display="flex" alignItems="center">
+                    <Box display="flex" alignItems="center" width="100%">
                       <span style={{ whiteSpace: 'nowrap' }}>{`${aValue} ${aUnit}`}</span>
                       {tooltipLines.length > 0 && (
-                        <TooltipIcon>
-                          <span style={{ whiteSpace: 'pre-line' }}>{tooltipLines.join('\n')}</span>
-                        </TooltipIcon>
+                        <Box component="span" sx={{ display: 'inline-flex', ml: 'auto' }}>
+                          <TooltipIcon>
+                            <span style={{ whiteSpace: 'pre-line' }}>
+                              {tooltipLines.join('\n')}
+                            </span>
+                          </TooltipIcon>
+                        </Box>
                       )}
                     </Box>
                   );
@@ -346,6 +382,7 @@ export function PodListRenderer(props: PodListProps) {
           id: 'node',
           label: t('glossary|Node'),
           gridTemplate: 'auto',
+          filterVariant: 'multi-select',
           getValue: pod => pod?.spec?.nodeName,
           render: pod =>
             pod?.spec?.nodeName && (

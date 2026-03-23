@@ -18,11 +18,27 @@ import Box from '@mui/material/Box';
 import MenuItem from '@mui/material/MenuItem';
 import { useTheme } from '@mui/material/styles';
 import { TableCellProps } from '@mui/material/TableCell';
-import { MRT_FilterFns, MRT_Row, MRT_SortingFn, MRT_TableInstance } from 'material-react-table';
-import { ComponentProps, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  MRT_FilterFns,
+  MRT_Row,
+  MRT_SortingFn,
+  MRT_SortingState,
+  MRT_TableInstance,
+  MRT_VisibilityState,
+} from 'material-react-table';
+import {
+  ComponentProps,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
+import { loadTableSettings, storeTableSettings } from '../../../helpers/tableSettings';
 import { useSelectedClusters } from '../../../lib/k8s';
-import { ApiError } from '../../../lib/k8s/apiProxy';
+import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { KubeObject } from '../../../lib/k8s/KubeObject';
 import { KubeObjectClass } from '../../../lib/k8s/KubeObject';
 import { useFilterFunc } from '../../../lib/util';
@@ -32,6 +48,7 @@ import { HeadlampEventType, useEventCallback } from '../../../redux/headlampEven
 import { useTypedSelector } from '../../../redux/hooks';
 import { useSettings } from '../../App/Settings/hook';
 import { ClusterGroupErrorMessage } from '../../cluster/ClusterGroupErrorMessage';
+import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import { DateLabel } from '../Label';
 import Link from '../Link';
 import Table, { TableColumn } from '../Table';
@@ -97,6 +114,16 @@ export type ResourceTableColumn<RowItem> = {
 
 export type ColumnType = 'age' | 'name' | 'namespace' | 'type' | 'kind' | 'cluster';
 
+/**
+ * Default column ID to use for sorting when no explicit default is provided.
+ */
+const DEFAULT_SORT_COLUMN_ID = 'age';
+
+/**
+ * Maximum length for generated table IDs to avoid overly long localStorage keys.
+ */
+const MAX_TABLE_ID_LENGTH = 50;
+
 export interface ResourceTableProps<RowItem> {
   /** The columns to be rendered, like used in Table, or by name. */
   columns: (ResourceTableColumn<RowItem> | ColumnType)[];
@@ -135,6 +162,7 @@ export interface ResourceTableProps<RowItem> {
 export interface ResourceTableFromResourceClassProps<KubeClass extends KubeObjectClass>
   extends Omit<ResourceTableProps<InstanceType<KubeClass>>, 'data'> {
   resourceClass: KubeClass;
+  namespaces?: string[];
 }
 
 export default function ResourceTable<KubeClass extends KubeObjectClass>(
@@ -155,7 +183,10 @@ function TableFromResourceClass<KubeClass extends KubeObjectClass>(
   props: ResourceTableFromResourceClassProps<KubeClass>
 ) {
   const { resourceClass, id, ...otherProps } = props;
-  const { items, errors } = resourceClass.useList({ namespace: useNamespaces() });
+  const selectedNamespaces = useNamespaces();
+  const { items, errors } = resourceClass.useList({
+    namespace: props.namespaces ?? selectedNamespaces,
+  });
 
   // throttle the update of the table to once per second
   const throttledItems = useThrottle(items, 1000);
@@ -177,44 +208,6 @@ function TableFromResourceClass<KubeClass extends KubeObjectClass>(
       data={throttledItems}
     />
   );
-}
-
-/**
- * Store the table settings in local storage.
- *
- * @param tableId - The ID of the table.
- * @param columns - The columns to store.
- * @returns void
- */
-function storeTableSettings(tableId: string, columns: { id?: string; show: boolean }[]) {
-  if (!tableId) {
-    console.debug('storeTableSettings: tableId is empty!', new Error().stack);
-    return;
-  }
-
-  const columnsWithIds = columns.map((c, i) => ({ id: i.toString(), ...c }));
-  // Delete the entry if there are no settings to store.
-  if (columnsWithIds.length === 0) {
-    localStorage.removeItem(`table_settings.${tableId}`);
-    return;
-  }
-  localStorage.setItem(`table_settings.${tableId}`, JSON.stringify(columnsWithIds));
-}
-
-/**
- * Load the table settings from local storage for a given table ID.
- *
- * @param tableId - The ID of the table.
- * @returns The table settings for the given table ID.
- */
-function loadTableSettings(tableId: string): { id: string; show: boolean }[] {
-  if (!tableId) {
-    console.debug('loadTableSettings: tableId is empty!', new Error().stack);
-    return [];
-  }
-
-  const settings = JSON.parse(localStorage.getItem(`table_settings.${tableId}`) || '[]');
-  return settings;
 }
 
 /**
@@ -316,11 +309,39 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
     initColumnVisibilityState(columns, id)
   );
 
+  // Generate a stable table ID for sorting state persistence
+  // This ensures each table has unique sorting state even without explicit id
+  const tableId = useMemo(() => {
+    if (id) return id;
+
+    // Create a stable fallback ID based on component props
+    const columnIds = columns
+      .map((col, index) => {
+        if (typeof col === 'string') return col;
+        return col.id || col.label || `col-${index}`;
+      })
+      .join('-');
+
+    return `table-${columnIds.slice(0, MAX_TABLE_ID_LENGTH)}`; // Limit length to avoid overly long keys
+  }, [id, columns]);
+
+  const [sorting, setSorting] = useLocalStorageState<MRT_SortingState>(
+    `table_sorting.${tableId}`,
+    // Initial sorting state
+    defaultSortingColumn
+      ? // If default sorting column is provided, use that
+        [defaultSortingColumn]
+      : // Otherwise fallback to age column, if it exists
+      columns.find(it => typeof it === 'string' && it === DEFAULT_SORT_COLUMN_ID)
+      ? [{ id: DEFAULT_SORT_COLUMN_ID, desc: false }]
+      : []
+  );
+
   const [tableSettings] = useState<{ id: string; show: boolean }[]>(
     !!id ? loadTableSettings(id) : []
   );
 
-  const [allColumns, sort] = useMemo(() => {
+  const [allColumns] = useMemo(() => {
     let processedColumns = columns;
 
     if (!noProcessing) {
@@ -412,7 +433,7 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
               id: 'namespace',
               header: t('glossary|Namespace'),
               gridTemplate: 'auto',
-              accessorFn: (item: RowItem) => item.getNamespace() ?? '',
+              accessorFn: (item: RowItem) => item.getNamespace() ?? '-',
               filterVariant: 'multi-select',
               Cell: ({ row }: { row: MRT_Row<RowItem> }) =>
                 row.original?.getNamespace() ? (
@@ -443,7 +464,7 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
           case 'kind':
             return {
               id: 'kind',
-              header: t('translation|Type'),
+              header: t('translation|Kind'),
               accessorFn: (resource: RowItem) => String(resource?.kind),
               filterVariant: 'multi-select',
               gridTemplate: 'min-content',
@@ -456,16 +477,7 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
       TableColumn<RowItem> & { gridTemplate?: string | number }
     >;
 
-    let sort = undefined;
-    const sortingColumn = defaultSortingColumn ?? allColumns.find(it => it.id === 'age');
-    if (sortingColumn) {
-      sort = {
-        id: sortingColumn.id!,
-        desc: false,
-      };
-    }
-
-    return [allColumns, sort];
+    return [allColumns];
   }, [
     columns,
     hideColumns,
@@ -474,6 +486,7 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
     defaultSortingColumn,
     tableProcessors,
     tableSettings,
+    sorting,
   ]);
 
   const defaultActions: RowAction[] = [
@@ -511,12 +524,12 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
 
   const renderRowActionMenuItems = useMemo(() => {
     if (actionsProcessed.length === 0) {
-      return null;
+      return undefined;
     }
-    return ({ closeMenu, row }: { closeMenu: () => void; row: MRT_Row<Record<string, any>> }) => {
+    return ({ closeMenu, row }: { closeMenu: () => void; row: MRT_Row<RowItem> }) => {
       return actionsProcessed.map(action => {
         if (action.action === undefined || action.action === null) {
-          return <MenuItem />;
+          return <MenuItem key={action.id || 'empty'} />;
         }
         return action.action({ item: row.original, closeMenu });
       });
@@ -534,14 +547,16 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
     if (!wrappedEnableRowSelection) {
       return undefined;
     }
-    return ({ table }: { table: MRT_TableInstance<Record<string, any>> }) => (
+    return ({ table }: { table: MRT_TableInstance<RowItem> }) => (
       <ResourceTableMultiActions table={table} />
     );
   }, [wrappedEnableRowSelection]);
 
-  function onColumnsVisibilityChange(updater: any): void {
+  function onColumnsVisibilityChange(
+    updater: MRT_VisibilityState | ((old: MRT_VisibilityState) => MRT_VisibilityState)
+  ): void {
     setColumnVisibility(oldCols => {
-      const newCols = updater(oldCols);
+      const newCols = typeof updater === 'function' ? updater(oldCols) : updater;
 
       if (!!id) {
         const colsToStore = Object.entries(newCols).map(([id, show]) => ({
@@ -555,39 +570,50 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
     });
   }
 
-  const initialState: ComponentProps<typeof Table>['initialState'] = {
-    sorting: sort ? [sort] : undefined,
-  };
+  const initialState: ComponentProps<typeof Table<RowItem>>['initialState'] = {};
 
   if (defaultGlobalFilter) {
     initialState.globalFilter = defaultGlobalFilter;
     initialState.showGlobalFilter = true;
   }
 
+  const handleSortingChange = useCallback(
+    (updaterOrValue: MRT_SortingState | ((old: MRT_SortingState) => MRT_SortingState)) => {
+      setSorting(old => {
+        if (typeof updaterOrValue === 'function') {
+          return updaterOrValue(old);
+        }
+        return updaterOrValue;
+      });
+    },
+    [setSorting]
+  );
+
   const filterFunc = filterFunction ?? defaultFilterFunc;
 
   return (
     <>
       <ClusterGroupErrorMessage errors={errors} />
-      <Table
+      <Table<RowItem>
         enableFullScreenToggle={false}
         enableFacetedValues
         enableRowSelection={wrappedEnableRowSelection}
         renderRowSelectionToolbar={renderRowSelectionToolbar}
         errorMessage={errorMessage}
-        // @todo: once KubeObject is not any we can remove this casting
-        columns={allColumns as TableColumn<Record<string, any>>[]}
-        data={(data ?? []) as Array<Record<string, any>>}
+        columns={allColumns as TableColumn<RowItem>[]}
+        data={(data ?? []) as Array<RowItem>}
         loading={data === null}
         initialState={initialState}
         rowsPerPage={storeRowsPerPageOptions}
         state={{
           columnVisibility,
+          sorting,
         }}
         reflectInURL={reflectInURL}
-        onColumnVisibilityChange={onColumnsVisibilityChange as any}
+        onColumnVisibilityChange={onColumnsVisibilityChange}
+        onSortingChange={handleSortingChange}
         enableRowActions={enableRowActions}
-        renderRowActionMenuItems={renderRowActionMenuItems as any}
+        renderRowActionMenuItems={renderRowActionMenuItems}
         filterFns={{
           kubeObjectSearch: (row, id, filterValue) => {
             const customFilterResult = filterFunc(row.original, filterValue);
@@ -596,7 +622,7 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
           },
         }}
         globalFilterFn="kubeObjectSearch"
-        filterFunction={filterFunc as any}
+        filterFunction={filterFunc}
         getRowId={item => item?.metadata?.uid}
       />
     </>

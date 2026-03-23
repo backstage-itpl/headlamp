@@ -21,11 +21,12 @@ import { useTranslation } from 'react-i18next';
 import { KubeObject } from '../../../lib/k8s/cluster';
 import Deployment from '../../../lib/k8s/deployment';
 import Endpoints from '../../../lib/k8s/endpoints';
-import Event from '../../../lib/k8s/event';
+import Event, { KubeEvent } from '../../../lib/k8s/event';
 import HPA from '../../../lib/k8s/hpa';
 import Pod from '../../../lib/k8s/pod';
 import ReplicaSet from '../../../lib/k8s/replicaSet';
 import Service from '../../../lib/k8s/service';
+import StatefulSet from '../../../lib/k8s/statefulSet';
 import { DateLabel } from '../../common/Label';
 import { DeploymentGlance } from './DeploymentGlance';
 import { EndpointsGlance } from './EndpointsGlance';
@@ -41,35 +42,35 @@ export const KubeObjectGlance = memo(({ resource }: { resource: KubeObject }) =>
   const { t } = useTranslation();
   const [events, setEvents] = useState<Event[]>([]);
   useEffect(() => {
-    Event.objectEvents(resource).then(it => setEvents(it));
+    Event.objectEvents(resource).then(fetchedEvents =>
+      setEvents(fetchedEvents.map((event: KubeEvent) => new Event(event)))
+    );
   }, []);
-
-  const kind = resource.kind;
 
   const sections = [];
 
-  if (kind === 'Pod') {
-    sections.push(<PodGlance pod={resource as Pod} />);
+  if (Pod.isClassOf(resource)) {
+    sections.push(<PodGlance pod={resource} />);
   }
 
-  if (kind === 'Deployment') {
-    sections.push(<DeploymentGlance deployment={resource as Deployment} />);
+  if (Deployment.isClassOf(resource)) {
+    sections.push(<DeploymentGlance deployment={resource} />);
   }
 
-  if (kind === 'Service') {
-    sections.push(<ServiceGlance service={resource as Service} />);
+  if (Service.isClassOf(resource)) {
+    sections.push(<ServiceGlance service={resource} />);
   }
 
-  if (kind === 'Endpoints') {
-    sections.push(<EndpointsGlance endpoints={resource as Endpoints} />);
+  if (Endpoints.isClassOf(resource)) {
+    sections.push(<EndpointsGlance endpoints={resource} />);
   }
 
-  if (kind === 'ReplicaSet' || kind === 'StatefulSet') {
-    sections.push(<ReplicaSetGlance set={resource as ReplicaSet} />);
+  if (ReplicaSet.isClassOf(resource) || StatefulSet.isClassOf(resource)) {
+    sections.push(<ReplicaSetGlance set={resource} />);
   }
 
-  if (kind === 'HorizontalPodAutoscaler') {
-    sections.push(<HorizontalPodAutoscalerGlance hpa={resource as HPA} />);
+  if (HPA.isClassOf(resource)) {
+    sections.push(<HorizontalPodAutoscalerGlance hpa={resource} />);
   }
 
   if (events.length > 0) {

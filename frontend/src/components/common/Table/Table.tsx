@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import MoreVertIcon from '@mui/icons-material/MoreVert';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import { useTheme } from '@mui/material/styles';
@@ -47,7 +48,8 @@ import { MRT_Localization_ZH_HANS } from 'material-react-table/locales/zh-Hans';
 import { MRT_Localization_ZH_HANT } from 'material-react-table/locales/zh-Hant';
 import { memo, ReactNode, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getTablesRowsPerPage } from '../../../helpers/tablesRowsPerPage';
+import { getTablesRowsPerPage, setTablesRowsPerPage } from '../../../helpers/tablesRowsPerPage';
+import { useShortcut } from '../../../lib/useShortcut';
 import { useURLState } from '../../../lib/util';
 import { useSettings } from '../../App/Settings/hook';
 import { useQueryParamsState } from '../../resourceMap/useQueryParamsState';
@@ -261,11 +263,18 @@ export default function Table<RowItem extends Record<string, any>>({
     enableColumnActions: false,
     localization: tableLocalizationMap[i18n.language],
     autoResetAll: false,
+    icons: {
+      ...tableProps.icons,
+      MoreHorizIcon: MoreVertIcon,
+    },
     onPaginationChange: (updater: any) => {
       if (!tableProps.data?.length) return;
       const pagination = updater({ pageIndex: Number(page) - 1, pageSize: Number(pageSize) });
       setPage(pagination.pageIndex + 1);
       setPageSize(pagination.pageSize);
+      if (pagination.pageSize !== Number(pageSize)) {
+        setTablesRowsPerPage(pagination.pageSize);
+      }
     },
     onGlobalFilterChange: setGlobalFilter,
     renderToolbarInternalActions: props => {
@@ -366,6 +375,16 @@ export default function Table<RowItem extends Record<string, any>>({
     },
   });
 
+  useShortcut(
+    'TABLE_COLUMN_FILTERS',
+    event => {
+      event.stopPropagation();
+      table.setShowColumnFilters(!table.getState().showColumnFilters);
+    },
+    {},
+    [table]
+  );
+
   // Hide actions column when others are hidden
   useEffect(() => {
     const visibility = table.getState().columnVisibility || {};
@@ -414,29 +433,33 @@ export default function Table<RowItem extends Record<string, any>>({
   ]);
 
   const rows = useMRT_Rows(table);
+  const rowIds = useMemo(() => rows.map(r => r.id), [rows]);
 
   // Handle shift+click range selection
   const handleRowClick = (e: React.MouseEvent, clickedIndex: number) => {
-    if (!table || !table.getRowModel) return;
-    const target = e.target;
-    if (
-      !(target instanceof HTMLInputElement) ||
-      target.tagName !== 'INPUT' ||
-      target.type !== 'checkbox'
-    ) {
+    if (!table || !table.getRowModel) {
       return;
     }
+
+    const target = e.target as HTMLElement | null;
+    const shouldHandle =
+      !!target &&
+      !!target.closest('input[type="checkbox"]') &&
+      !target.closest('.MuiSwitch-root, [role="switch"]') &&
+      !target.closest('[role="dialog"]');
+
+    if (!shouldHandle) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
-
-    const rowModel = table.getRowModel();
-    const rowIds = rowModel.rows.map(row => row.id);
 
     if (e.shiftKey && lastSelectedRowIndex !== null) {
       const start = Math.min(lastSelectedRowIndex, clickedIndex);
       const end = Math.max(lastSelectedRowIndex, clickedIndex);
-      const newSelected: Record<string, boolean> = {};
 
+      const newSelected: Record<string, boolean> = {};
       for (let i = start; i <= end; i++) {
         const rowId = rowIds[i];
         if (rowId) {
@@ -444,16 +467,10 @@ export default function Table<RowItem extends Record<string, any>>({
         }
       }
 
-      table.setRowSelection(prev => ({
-        ...prev,
-        ...newSelected,
-      }));
+      table.setRowSelection(prev => ({ ...prev, ...newSelected }));
     } else {
       const rowId = rowIds[clickedIndex];
-      table.setRowSelection(prev => ({
-        ...prev,
-        [rowId]: !prev[rowId],
-      }));
+      table.setRowSelection(prev => ({ ...prev, [rowId]: !prev[rowId] }));
       setLastSelectedRowIndex(clickedIndex);
     }
   };

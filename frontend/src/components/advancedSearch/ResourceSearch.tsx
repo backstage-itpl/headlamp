@@ -247,7 +247,12 @@ export function ResourceSearch({
       </Box>
 
       {deferredResults.items.length > maxResults && (
-        <Alert severity="warning">
+        <Alert
+          severity="warning"
+          sx={{
+            color: theme.palette.text.primary,
+          }}
+        >
           {t('Found {{0}} results. Showing first {{1}}', {
             0: deferredResults.items.length,
             1: maxResults,
@@ -298,7 +303,7 @@ export function ResourceSearch({
   );
 }
 
-function ViewYaml({ item }: { item: KubeObject }) {
+export function ViewYaml({ item }: { item: KubeObject }) {
   return (
     <>
       <Button

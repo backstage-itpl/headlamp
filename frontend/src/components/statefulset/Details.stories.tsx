@@ -100,6 +100,12 @@ export default {
     msw: {
       handlers: {
         storyBase: [
+          http.get('http://localhost:4466/apis/apps/v1/namespaces/default/statefulsets', () => {
+            return HttpResponse.json({
+              kind: 'StatefulSetList',
+              items: [],
+            });
+          }),
           http.get('http://localhost:4466/api/v1/namespaces/default/pods', () => {
             return HttpResponse.json({
               kind: 'PodList',
@@ -120,6 +126,15 @@ export default {
               items: [],
             });
           }),
+          http.get(
+            'http://localhost:4466/apis/apps/v1/namespaces/default/controllerrevisions',
+            () => {
+              return HttpResponse.json({
+                kind: 'ControllerRevisionList',
+                items: [],
+              });
+            }
+          ),
         ],
       },
     },

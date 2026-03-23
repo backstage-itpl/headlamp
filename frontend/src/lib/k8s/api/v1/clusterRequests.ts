@@ -16,17 +16,20 @@
 
 // @todo: Params is a confusing name for options, because params are also query params.
 
+import { addBackstageAuthHeaders } from '../../../../helpers/addBackstageAuthHeaders';
 import { isDebugVerbose } from '../../../../helpers/debugVerbose';
+import { getAppUrl } from '../../../../helpers/getAppUrl';
+import { isBackstage } from '../../../../helpers/isBackstage';
 import store from '../../../../redux/stores/store';
-import { findKubeconfigByClusterName, getUserIdFromLocalStorage } from '../../../../stateless';
-import { getToken, logout, setToken } from '../../../auth';
+import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
+import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
+import { logout } from '../../../auth';
 import { getCluster } from '../../../cluster';
-import { KubeObjectInterface } from '../../KubeObject';
-import { ApiError } from '../v2/ApiError';
-import { BASE_HTTP_URL, CLUSTERS_PREFIX, DEFAULT_TIMEOUT, JSON_HEADERS } from './constants';
+import type { KubeObjectInterface } from '../../KubeObject';
+import type { ApiError } from '../v2/ApiError';
+import { CLUSTERS_PREFIX, DEFAULT_TIMEOUT, JSON_HEADERS } from './constants';
 import { asQuery, combinePath } from './formatUrl';
-import { QueryParameters } from './queryParameters';
-import { refreshToken } from './tokenApi';
+import type { QueryParameters } from './queryParameters';
 
 /**
  * Options for the request.
@@ -142,20 +145,10 @@ export async function clusterRequest(
 
   let fullPath = path;
   if (cluster) {
-    const token = getToken(cluster);
     const kubeconfig = await findKubeconfigByClusterName(cluster);
     if (kubeconfig !== null) {
       opts.headers['KUBECONFIG'] = kubeconfig;
       opts.headers['X-HEADLAMP-USER-ID'] = userID;
-    }
-
-    // Refresh service account token only if the cluster auth type is not OIDC
-    if (getClusterAuthType(cluster) !== 'oidc') {
-      await refreshToken(token);
-    }
-
-    if (!!token) {
-      opts.headers.Authorization = `Bearer ${token}`;
     }
 
     fullPath = combinePath(`/${CLUSTERS_PREFIX}/${cluster}`, path);
@@ -164,9 +157,16 @@ export async function clusterRequest(
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
 
-  let url = combinePath(BASE_HTTP_URL, fullPath);
+  let url = combinePath(getAppUrl(), fullPath);
   url += asQuery(queryParams);
-  const requestData = { signal: controller.signal, ...opts };
+  const requestData = {
+    signal: controller.signal,
+    credentials: 'include' as RequestCredentials,
+    ...opts,
+  };
+  if (isBackstage()) {
+    requestData.headers = addBackstageAuthHeaders(requestData.headers);
+  }
   let response: Response = new Response(undefined, { status: 502, statusText: 'Unreachable' });
   try {
     response = await fetch(url, requestData);
@@ -187,18 +187,11 @@ export async function clusterRequest(
     window.location.reload();
   }
 
-  // In case of OIDC auth if the token is about to expire the backend
-  // sends a refreshed token in the response header.
-  const newToken = response.headers.get('X-Authorization');
-  if (newToken) {
-    setToken(cluster, newToken);
-  }
-
   if (!response.ok) {
     const { status, statusText } = response;
     if (autoLogoutOnAuthError && status === 401 && opts.headers.Authorization) {
       console.error('Logging out due to auth error', { status, statusText, path });
-      logout();
+      logout(cluster);
     }
 
     let message = statusText;
@@ -206,6 +199,19 @@ export async function clusterRequest(
       if (isJSON) {
         const json = await response.json();
         message += ` - ${json.message}`;
+      } else {
+        // When not expecting JSON, still try to get error details from body
+        const text = await response.text();
+        if (text) {
+          try {
+            // Try to parse as JSON in case backend returns JSON error
+            const json = JSON.parse(text);
+            message += ` - ${json.message || text}`;
+          } catch {
+            // Not JSON, use as plain text
+            message += ` - ${text}`;
+          }
+        }
       }
     } catch (err) {
       console.error(
@@ -261,6 +267,37 @@ export function patch(
     method: 'PATCH',
     body,
     headers: { ...JSON_HEADERS, 'Content-Type': 'application/merge-patch+json' },
+    autoLogoutOnAuthError,
+    cluster,
+    ...requestOptions,
+  };
+  return clusterRequest(url, opts);
+}
+
+/**
+ * Performs a JSON Patch (RFC 6902) request.
+ * This is different from the merge patch above - it uses 'application/json-patch+json'
+ * content type and expects an array of patch operations.
+ *
+ * @param url - The URL to patch.
+ * @param operations - Array of JSON Patch operations (e.g., [{op: 'replace', path: '/spec/template', value: {...}}]).
+ * @param autoLogoutOnAuthError - Whether to automatically log out on auth errors.
+ * @param options - Additional request options.
+ * @returns A Promise that resolves to the patched resource.
+ */
+export function jsonPatch(
+  url: string,
+  operations: Array<{ op: string; path: string; value?: any }>,
+  autoLogoutOnAuthError = true,
+  options: ClusterRequestParams = {}
+) {
+  const { cluster: clusterName, ...requestOptions } = options;
+  const body = JSON.stringify(operations);
+  const cluster = clusterName || getCluster() || '';
+  const opts = {
+    method: 'PATCH',
+    body,
+    headers: { ...JSON_HEADERS, 'Content-Type': 'application/json-patch+json' },
     autoLogoutOnAuthError,
     cluster,
     ...requestOptions,

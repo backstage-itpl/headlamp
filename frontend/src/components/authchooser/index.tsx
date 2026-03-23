@@ -25,8 +25,11 @@ import { generatePath, useHistory, useLocation } from 'react-router-dom';
 import { getAppUrl } from '../../helpers/getAppUrl';
 import { getCluster, getClusterPrefixedPath } from '../../lib/cluster';
 import { useClustersConf } from '../../lib/k8s';
-import { testAuth } from '../../lib/k8s/apiProxy';
-import { createRouteURL, getRoute, getRoutePath } from '../../lib/router';
+import { testAuth } from '../../lib/k8s/api/v1/clusterApi';
+import { queryClient } from '../../lib/queryClient';
+import { createRouteURL } from '../../lib/router/createRouteURL';
+import { getRoute } from '../../lib/router/getRoute';
+import { getRoutePath } from '../../lib/router/getRoutePath';
 import { setConfig } from '../../redux/configSlice';
 import { ClusterDialog } from '../cluster/Chooser';
 import { DialogTitle } from '../common/Dialog';
@@ -205,18 +208,20 @@ function AuthChooser({ children }: AuthChooserProps) {
       clusterAuthType={clusterAuthType}
       handleTryAgain={runTestAuthAgain}
       handleOidcAuth={() => {
-        history.replace({
-          pathname: generatePath(getClusterPrefixedPath(), {
-            cluster: clusterName as string,
-          }),
-        });
+        queryClient.invalidateQueries({ queryKey: ['clusterMe', clusterName], exact: true });
+        history.replace(from);
       }}
       handleBackButtonPress={() => {
         numClusters > 1 ? history.goBack() : history.push('/');
       }}
       handleTokenAuth={() => {
+        const tokenRoute = getRoute('token');
+        if (!tokenRoute) {
+          console.error("Can't find 'token' route");
+          return;
+        }
         history.push({
-          pathname: generatePath(getRoutePath(getRoute('token')), {
+          pathname: generatePath(getRoutePath(tokenRoute), {
             cluster: clusterName as string,
           }),
         });
@@ -294,7 +299,7 @@ export function PureAuthChooser({
                 <ColorButton onClick={handleTokenAuth}>{t('Use A Token')}</ColorButton>
               </Box>
               <Box m={2} textAlign="center">
-                <Link routeName="settingsCluster" params={{ clusterID: clusterName }}>
+                <Link routeName="settingsClusterHomeContext" search={{ c: clusterName }}>
                   {t('translation|Cluster settings')}
                 </Link>
               </Box>
@@ -312,7 +317,7 @@ export function PureAuthChooser({
                         errorMessage: error!.message,
                       })}
                 </Empty>
-                <Link routeName="settingsClusterHomeContext">
+                <Link routeName="settingsClusterHomeContext" search={{ c: clusterName }}>
                   {t('translation|Cluster settings')}
                 </Link>
               </Box>

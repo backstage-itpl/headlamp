@@ -23,18 +23,20 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import useAutocomplete from '@mui/material/useAutocomplete';
 import { UseAutocompleteReturnValue } from '@mui/material/useAutocomplete';
-import Fuse from 'fuse.js';
+import Fuse, { Expression, FuseResultMatch } from 'fuse.js';
 import { capitalize } from 'lodash';
 import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
 import { generatePath, useHistory, useLocation, useRouteMatch } from 'react-router';
 import { FixedSizeList } from 'react-window';
+import { loadClusterSettings } from '../../helpers/clusterSettings';
 import { useClustersConf, useSelectedClusters } from '../../lib/k8s';
 import ConfigMap from '../../lib/k8s/configMap';
 import CronJob from '../../lib/k8s/cronJob';
 import Deployment from '../../lib/k8s/deployment';
 import Endpoints from '../../lib/k8s/endpoints';
+import EndpointSlice from '../../lib/k8s/endpointSlices';
 import Ingress from '../../lib/k8s/ingress';
 import Job from '../../lib/k8s/job';
 import { KubeObject, KubeObjectClass } from '../../lib/k8s/KubeObject';
@@ -46,9 +48,12 @@ import ReplicaSet from '../../lib/k8s/replicaSet';
 import Service from '../../lib/k8s/service';
 import ServiceAccount from '../../lib/k8s/serviceAccount';
 import StatefulSet from '../../lib/k8s/statefulSet';
-import { createRouteURL, getDefaultRoutes } from '../../lib/router';
+import { createRouteURL } from '../../lib/router/createRouteURL';
+import { getDefaultRoutes } from '../../lib/router/getDefaultRoutes';
 import { getClusterPrefixedPath } from '../../lib/util';
+import { setNamespaceFilter } from '../../redux/filterSlice';
 import { useTypedSelector } from '../../redux/hooks';
+import { setShortcutsDialogOpen } from '../../redux/shortcutsSlice';
 import { Activity } from '../activity/Activity';
 import { ADVANCED_SEARCH_QUERY_KEY } from '../advancedSearch/AdvancedSearch';
 import { ThemePreview } from '../App/Settings/ThemePreview';
@@ -71,9 +76,11 @@ interface SearchResult {
   label: string;
   icon?: JSX.Element;
   subLabel?: string;
+  k8sLabels?: string[];
   onClick: () => void;
-  labelMatch?: { indices: number[][] };
-  subLabelMatch?: { indices: number[][] };
+  labelMatch?: FuseResultMatch;
+  subLabelMatch?: FuseResultMatch;
+  k8sLabelsMatch?: FuseResultMatch;
 }
 
 /**
@@ -91,6 +98,7 @@ const classes: KubeObjectClass[] = [
   ReplicaSet,
   PersistentVolumeClaim,
   Endpoints,
+  EndpointSlice,
   Ingress,
   ServiceAccount,
   Node,
@@ -127,6 +135,9 @@ function makeKubeObjectResults(
       items?.map(item => ({
         id: item.metadata.uid,
         label: item.metadata.name,
+        k8sLabels: item.metadata.labels
+          ? Object.entries(item.metadata.labels).map(([key, value]) => key + '=' + value)
+          : [],
         icon: (
           <Suspense fallback={null}>
             <LazyKubeIcon kind={item.kind} width="24px" height="24px" />
@@ -158,16 +169,62 @@ export function GlobalSearchContent({
 }) {
   const { t } = useTranslation();
   const history = useHistory();
+  const dispatch = useDispatch();
   const [query, setQuery] = useState(defaultValue ?? '');
   const clusters = useClustersConf() ?? {};
   const selectedClusters = useSelectedClusters();
-  const drawerEnabled = useTypedSelector(state => state.drawerMode.isDetailDrawerEnabled);
+  const drawerEnabled = useTypedSelector(state => state?.drawerMode?.isDetailDrawerEnabled);
 
   const [recent, bump] = useRecent('search-recent-items');
 
   // Resource search items
   const resources = useSearchResources();
   const loading = resources.filter(it => it.isLoading).map(it => it.kind);
+  const namespaceItems = useMemo(() => {
+    const namespaceResource = resources.find(resource => resource.kind === Namespace.kind);
+    return (namespaceResource?.items as Namespace[]) ?? [];
+  }, [resources]);
+  const namespaceOptions = useMemo(() => {
+    const knownNamespaces = new Set<string>(
+      [
+        ...namespaceItems.map(n => n.metadata.name),
+        ...selectedClusters.flatMap(c => loadClusterSettings(c)?.allowedNamespaces ?? []),
+      ].filter(Boolean)
+    );
+
+    const options: SearchResult[] = [];
+
+    const addOption = (namespaceValue: string) => {
+      if (!namespaceValue) {
+        return;
+      }
+
+      options.push({
+        id: `set-namespace-${namespaceValue}`,
+        subLabel: t('translation|Current Namespace'),
+        label: t('translation|Set namespace: {{namespace}}', { namespace: namespaceValue }),
+        icon: (
+          <Suspense fallback={null}>
+            <LazyKubeIcon kind="Namespace" width="24px" height="24px" />
+          </Suspense>
+        ),
+        onClick: () => {
+          dispatch(setNamespaceFilter([namespaceValue]));
+        },
+      });
+    };
+
+    const trimmedQuery = query.trim();
+    if (trimmedQuery.length > 0) {
+      addOption(trimmedQuery);
+    }
+
+    Array.from(knownNamespaces)
+      .sort((a, b) => a.localeCompare(b))
+      .forEach(addOption);
+
+    return options;
+  }, [query, selectedClusters, namespaceItems, dispatch, t]);
   const isMap = useRouteMatch(getClusterPrefixedPath(getDefaultRoutes().map?.path));
   const location = useLocation();
   const items = useMemo(
@@ -254,7 +311,6 @@ export function GlobalSearchContent({
   );
 
   // Themes
-  const dispatch = useDispatch();
   const appThemes = useAppThemes();
   const themeActions = useMemo(() => {
     return appThemes.map(theme => ({
@@ -283,13 +339,40 @@ export function GlobalSearchContent({
       },
     };
   }, [query, selectedClusters]);
+  const configureShortcutsAction: SearchResult = useMemo(
+    () => ({
+      id: 'configure-shortcuts',
+      subLabel: t('Settings'),
+      icon: <Icon icon="mdi:keyboard-settings-outline" />,
+      label: t('Configure Keyboard Shortcuts'),
+      onClick: () => {
+        dispatch(setShortcutsDialogOpen(true));
+        onBlur();
+      },
+    }),
+    [dispatch, t, onBlur]
+  );
 
   const allOptions = useMemo(
     () =>
-      [...themeActions, ...clusterItems, ...routes, ...items, advancedSearchSuggestion].filter(
-        Boolean
-      ) as SearchResult[],
-    [themeActions, clusterItems, routes, items, advancedSearchSuggestion]
+      [
+        configureShortcutsAction,
+        ...themeActions,
+        ...clusterItems,
+        ...routes,
+        ...namespaceOptions,
+        ...items,
+        advancedSearchSuggestion,
+      ].filter(Boolean) as SearchResult[],
+    [
+      configureShortcutsAction,
+      themeActions,
+      clusterItems,
+      routes,
+      namespaceOptions,
+      items,
+      advancedSearchSuggestion,
+    ]
   );
 
   const fuse = useMemo(
@@ -297,26 +380,48 @@ export function GlobalSearchContent({
       new Fuse(allOptions, {
         keys: [
           'label',
+          'k8sLabels',
           // We also want to search by subLabel sometimes
           // For example 'default namespace' (there are a lot of objects with 'default' name)
           // But it shouldn't be main field so it has half the weight (1/2)
           { name: 'subLabel', weight: 0.5 },
         ],
         includeMatches: true,
+        threshold: 0.3, // lower threshold to reduce false positives
       }),
     [allOptions]
   );
 
   const results: SearchResult[] = useMemo(() => {
     if (!query) return [];
-    return fuse.search(query, { limit: 100 }).map(
-      ({ item, matches }) =>
-        ({
-          ...item,
-          labelMatch: matches?.find(it => it.key === 'label'),
-          subLabelMatch: matches?.find(it => it.key === 'subLabel'),
-        } as any)
-    );
+    return fuse
+      .search(
+        {
+          // Construct logical query https://www.fusejs.io/api/query.html
+          // Improves search for space separated terms
+          $and: query
+            .split(' ')
+            .filter(Boolean)
+            .map(it => ({
+              $or: [
+                { label: it },
+                // Only search labels if there's an "=" character in the query
+                it.includes('=') ? { k8sLabels: it } : undefined,
+                { subLabel: it },
+              ].filter(Boolean) as Expression[],
+            })),
+        },
+        { limit: 100 }
+      )
+      .map(
+        ({ item, matches }) =>
+          ({
+            ...item,
+            labelMatch: matches?.find(it => it.key === 'label'),
+            subLabelMatch: matches?.find(it => it.key === 'subLabel'),
+            k8sLabelsMatch: matches?.find(it => it.key === 'k8sLabels'),
+          } satisfies SearchResult)
+      );
   }, [query, fuse]);
 
   const recentItems = useMemo(() => {
@@ -423,7 +528,7 @@ export function GlobalSearchContent({
   );
 }
 
-function HighlightText({ text, match }: { text?: string; match?: { indices: number[][] } }) {
+function HighlightText({ text, match }: { text?: string; match?: FuseResultMatch }) {
   if (!text) return null;
   if (!match) return <>{text}</>;
 
@@ -493,6 +598,31 @@ function SearchRow({
           <HighlightText text={option.label} match={option.labelMatch} />
         </Box>
       </Box>
+      {option.k8sLabelsMatch && option.k8sLabelsMatch.value && (
+        <Typography
+          title={option.k8sLabelsMatch.value}
+          sx={theme => ({
+            color: theme.palette.text.primary,
+            borderRadius: theme.shape.borderRadius + 'px',
+            backgroundColor: theme.palette.background.muted,
+            border: '1px solid',
+            borderColor: theme.palette.divider,
+            fontSize: theme.typography.pxToRem(14),
+            wordBreak: 'break-word',
+            paddingTop: 0.25,
+            paddingBottom: 0.25,
+            paddingLeft: 0.5,
+            paddingRight: 0.5,
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+            overflowWrap: 'anywhere',
+            textOverflow: 'ellipsis',
+            maxWidth: '220px',
+          })}
+        >
+          <HighlightText text={option.k8sLabelsMatch.value} match={option.k8sLabelsMatch} />
+        </Typography>
+      )}
     </Box>
   );
 }

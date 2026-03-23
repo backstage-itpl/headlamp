@@ -15,9 +15,12 @@
  */
 
 import { Base64 } from 'js-base64';
-import { post, stream, StreamArgs, StreamResultsCb } from './apiProxy';
-import { KubeCondition, KubeContainer, KubeContainerStatus, Time } from './cluster';
-import { KubeObject, KubeObjectInterface } from './KubeObject';
+import { patch, post } from './api/v1/clusterRequests';
+import type { StreamArgs, StreamResultsCb } from './api/v1/streamingApi';
+import { stream } from './api/v1/streamingApi';
+import type { KubeCondition, KubeContainer, KubeContainerStatus, Time } from './cluster';
+import type { KubeObjectInterface } from './KubeObject';
+import { KubeObject } from './KubeObject';
 
 export interface KubeVolume {
   name: string;
@@ -292,6 +295,43 @@ class Pod extends KubeObject<KubePod> {
     });
   }
 
+  /**
+   * Add an ephemeral container to the pod.
+   * @param containerName - The name of the ephemeral container to add
+   * @param image - The container image to use
+   * @param command - Optional command to run in the container (defaults to ['sh'])
+   * @returns Promise that resolves when the ephemeral container is added
+   */
+  async addEphemeralContainer(
+    containerName: string,
+    image: string,
+    command: string[] = ['sh']
+  ): Promise<void> {
+    const ephemeralContainer: KubeContainer = {
+      name: containerName,
+      image,
+      tty: true,
+      stdin: true,
+      stdinOnce: true,
+      command,
+      imagePullPolicy: 'IfNotPresent',
+    };
+
+    // Get current ephemeral containers
+    const currentEphemeralContainers = this.spec.ephemeralContainers || [];
+
+    // Prepare the patch body
+    const patchBody = {
+      spec: {
+        ephemeralContainers: [...currentEphemeralContainers, ephemeralContainer],
+      },
+    };
+
+    const url = `/api/v1/namespaces/${this.getNamespace()}/pods/${this.getName()}/ephemeralcontainers`;
+
+    await patch(url, patchBody, true, { cluster: this.cluster });
+  }
+
   private getLastRestartDate(container: KubeContainerStatus, lastRestartDate: Date): Date {
     if (!!container.lastState?.terminated) {
       const terminatedDate = new Date(container.lastState.terminated.finishedAt);
@@ -303,6 +343,19 @@ class Pod extends KubeObject<KubePod> {
     return lastRestartDate;
   }
 
+  private isRestartableInitContainer(spec?: KubeContainer): boolean {
+    return !!spec && (spec as any).restartPolicy === 'Always';
+  }
+
+  private isPodInitializedConditionTrue(status?: KubePod['status']): boolean {
+    for (const c of status?.conditions ?? []) {
+      if (c.type === 'Initialized' && c.status === 'True') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private hasPodReadyCondition(conditions: any): boolean {
     for (const condition of conditions) {
       if (condition.type === 'Ready' && condition.Status === 'True') {
@@ -312,7 +365,7 @@ class Pod extends KubeObject<KubePod> {
     return false;
   }
 
-  // Implementation based on: https://github.com/kubernetes/kubernetes/blob/7b6293b6b6a5662fc37f440e839cf5da8b96e935/pkg/printers/internalversion/printers.go#L759
+  // Implementation based on: https://github.com/kubernetes/kubernetes/blob/67216cfdd980cdd0234866d66a9ffe2ba3d8fcc4/pkg/printers/internalversion/printers.go#L891
   getDetailedStatus(): PodDetailedStatus {
     // We cache this data to avoid going through all this logic when nothing has changed
     if (
@@ -331,12 +384,22 @@ class Pod extends KubeObject<KubePod> {
     }
 
     let restarts = 0;
-    const totalContainers = (this.spec.containers ?? []).length;
+    let restartableInitContainerRestarts = 0;
     let readyContainers = 0;
     let message = '';
     let lastRestartDate = new Date(0);
+    let lastRestartableInitContainerRestartDate = new Date(0);
 
     let reason = this.status.reason || this.status.phase;
+
+    const initContainers: Record<string, KubeContainer> = {};
+    let totalContainers = (this.spec.containers ?? []).length;
+    for (const ic of this.spec.initContainers ?? []) {
+      initContainers[ic.name] = ic;
+      if (this.isRestartableInitContainer(ic)) {
+        totalContainers++;
+      }
+    }
 
     let initializing = false;
     for (const i in this.status.initContainerStatuses ?? []) {
@@ -344,8 +407,34 @@ class Pod extends KubeObject<KubePod> {
       restarts += container.restartCount;
       lastRestartDate = this.getLastRestartDate(container, lastRestartDate);
 
+      if (container.lastState.terminated !== null) {
+        const terminatedDate = container.lastState.terminated?.finishedAt
+          ? new Date(container.lastState.terminated?.finishedAt)
+          : undefined;
+        if (!!terminatedDate && lastRestartDate < terminatedDate) {
+          lastRestartDate = terminatedDate;
+        }
+      }
+
+      if (this.isRestartableInitContainer(initContainers[container.name])) {
+        restartableInitContainerRestarts += container.restartCount;
+        if (container.lastState.terminated !== null) {
+          const terminatedDate = container.lastState.terminated?.finishedAt
+            ? new Date(container.lastState.terminated?.finishedAt)
+            : undefined;
+          if (!!terminatedDate && lastRestartableInitContainerRestartDate < terminatedDate) {
+            lastRestartableInitContainerRestartDate = terminatedDate;
+          }
+        }
+      }
+
       switch (true) {
         case container.state.terminated?.exitCode === 0:
+          continue;
+        case !!container.started && this.isRestartableInitContainer(initContainers[container.name]):
+          if (container.ready) {
+            readyContainers++;
+          }
           continue;
         case !!container.state.terminated:
           if (!container.state.terminated!.reason) {
@@ -373,8 +462,9 @@ class Pod extends KubeObject<KubePod> {
       break;
     }
 
-    if (!initializing) {
-      restarts = 0;
+    if (!initializing || this.isPodInitializedConditionTrue(this.status)) {
+      restarts = restartableInitContainerRestarts;
+      lastRestartDate = lastRestartableInitContainerRestartDate;
       let hasRunning = false;
       for (let i = (this.status?.containerStatuses?.length || 0) - 1; i >= 0; i--) {
         const container = this.status?.containerStatuses[i];

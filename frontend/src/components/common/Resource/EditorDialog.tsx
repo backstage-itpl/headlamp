@@ -15,7 +15,7 @@
  */
 
 import '../../../i18n/config';
-import Editor, { loader } from '@monaco-editor/react';
+import Editor from '@monaco-editor/react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import DialogActions from '@mui/material/DialogActions';
@@ -27,12 +27,11 @@ import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
 import * as yaml from 'js-yaml';
 import _ from 'lodash';
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
 import { getCluster } from '../../../lib/cluster';
-import { apply } from '../../../lib/k8s/apiProxy';
+import { apply } from '../../../lib/k8s/api/v1/apply';
 import { KubeObjectInterface } from '../../../lib/k8s/KubeObject';
 import { useId } from '../../../lib/util';
 import { clusterAction } from '../../../redux/clusterActionSlice';
@@ -50,6 +49,7 @@ import Loader from '../Loader';
 import Tabs from '../Tabs';
 import DocsViewer from './DocsViewer';
 import SimpleEditor from './SimpleEditor';
+import { UploadDialog } from './UploadDialog';
 
 type KubeObjectIsh = Partial<KubeObjectInterface>;
 
@@ -96,9 +96,6 @@ export default function EditorDialog(props: EditorDialogProps) {
     readOnly: isReadOnly(),
     automaticLayout: true,
   };
-  const { i18n } = useTranslation();
-  const [lang, setLang] = React.useState(i18n.language);
-
   const initialCode = typeof item === 'string' ? item : yaml.dump(item || {});
   const originalCodeRef = React.useRef({ code: initialCode, format: item ? 'yaml' : '' });
   const [code, setCode] = React.useState(originalCodeRef.current);
@@ -123,6 +120,7 @@ export default function EditorDialog(props: EditorDialogProps) {
     'useSimpleEditor',
     false
   );
+  const [uploadFiles, setUploadFiles] = React.useState(false);
 
   const dispatchCreateEvent = useEventCallback(HeadlampEventType.CREATE_RESOURCE);
   const dispatch: AppDispatch = useDispatch();
@@ -180,17 +178,6 @@ export default function EditorDialog(props: EditorDialogProps) {
   React.useEffect(() => {
     codeRef.current = code;
   }, [code]);
-
-  React.useEffect(() => {
-    i18n.on('languageChanged', setLang);
-    return () => {
-      // Stop the timeout from trying to use the component after it's been unmounted.
-      clearTimeout(lastCodeCheckHandler.current);
-
-      i18n.off('languageChanged', setLang);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   function isReadOnly() {
     return onSave === null;
@@ -343,7 +330,7 @@ export default function EditorDialog(props: EditorDialogProps) {
 
     if (typeof onSave === 'string' && onSave === 'default') {
       const resourceNames = newItemDefs.map(newItemDef => newItemDef.metadata.name);
-      const clusterName = getCluster() || '';
+      const clusterName = (item as KubeObjectIsh)?.cluster || getCluster() || '';
 
       dispatch(
         clusterAction(() => applyFunc(newItemDefs, clusterName), {
@@ -359,7 +346,6 @@ export default function EditorDialog(props: EditorDialogProps) {
           errorMessage: t('translation|Failed to apply {{ newItemName }}.', {
             newItemName: resourceNames.join(','),
           }),
-          cancelUrl: location.pathname,
         })
       );
 
@@ -372,31 +358,21 @@ export default function EditorDialog(props: EditorDialogProps) {
   }
 
   function makeEditor() {
-    // @todo: monaco editor does not support pt, ta, hi amongst various other langs.
-    if (['de', 'es', 'fr', 'it', 'ja', 'ko', 'ru', 'zh-cn', 'zh-tw'].includes(lang)) {
-      loader.config({ 'vs/nls': { availableLanguages: { '*': lang } }, monaco });
-    } else {
-      loader.config({ monaco });
-    }
-
-    return useSimpleEditor ? (
+    const language = originalCodeRef.current.format || 'yaml';
+    return (
       <Box height="100%">
-        <SimpleEditor
-          language={originalCodeRef.current.format || 'yaml'}
-          value={code.code}
-          onChange={onChange}
-        />
-      </Box>
-    ) : (
-      <Box height="100%">
-        <Editor
-          language={originalCodeRef.current.format || 'yaml'}
-          theme={theme.base === 'dark' ? 'vs-dark' : 'light'}
-          value={code.code}
-          options={editorOptions}
-          onChange={onChange}
-          height="100%"
-        />
+        {useSimpleEditor ? (
+          <SimpleEditor language={language} value={code.code} onChange={onChange} />
+        ) : (
+          <Editor
+            language={language}
+            theme={theme.base === 'dark' ? 'vs-dark' : 'light'}
+            value={code.code}
+            options={editorOptions}
+            onChange={onChange}
+            height="100%"
+          />
+        )}
       </Box>
     );
   }
@@ -416,6 +392,7 @@ export default function EditorDialog(props: EditorDialogProps) {
     <Loader title={t('Loading editor')} />
   ) : (
     <React.Fragment>
+      {uploadFiles ? <UploadDialog setUploadFiles={setUploadFiles} setCode={setCode} /> : ''}
       <DialogContent
         sx={{
           height: '80%',
@@ -461,6 +438,14 @@ export default function EditorDialog(props: EditorDialogProps) {
                   }
                   label={t('Use minimal editor')}
                 />
+                <Button
+                  variant="contained"
+                  onClick={() => {
+                    setUploadFiles(true);
+                  }}
+                >
+                  {t('translation|Upload File/URL')}
+                </Button>
               </FormGroup>
             </Grid>
           </Grid>
